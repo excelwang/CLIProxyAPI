@@ -46,6 +46,7 @@ type serverOptionConfig struct {
 	extraMiddleware      []gin.HandlerFunc
 	engineConfigurator   func(*gin.Engine)
 	routerConfigurator   func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)
+	serverConfigurator   func(*Server)
 	requestLoggerFactory func(*config.Config, string) logging.RequestLogger
 	localPassword        string
 	keepAliveEnabled     bool
@@ -81,6 +82,13 @@ func WithEngineConfigurator(fn func(*gin.Engine)) ServerOption {
 func WithRouterConfigurator(fn func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)) ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.routerConfigurator = fn
+	}
+}
+
+// WithServerConfigurator appends a callback after the server finishes route registration.
+func WithServerConfigurator(fn func(*Server)) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.serverConfigurator = fn
 	}
 }
 
@@ -299,6 +307,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.managementRoutesEnabled.Store(hasManagementSecret)
 	if hasManagementSecret {
 		s.registerManagementRoutes()
+	}
+	if optionState.serverConfigurator != nil {
+		optionState.serverConfigurator(s)
 	}
 
 	if optionState.keepAliveEnabled {

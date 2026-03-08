@@ -164,6 +164,7 @@ func TestDeleteAuthFile_AllowsReaddingSameNameWithoutStaleState(t *testing.T) {
 	}
 
 	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+	h.setSelectedCodexAuthID(authID)
 	h.tokenStore = store
 
 	deleteRec := httptest.NewRecorder()
@@ -195,5 +196,84 @@ func TestDeleteAuthFile_AllowsReaddingSameNameWithoutStaleState(t *testing.T) {
 	}
 	if len(updated.ModelStates) != 0 {
 		t.Fatalf("expected stale model state to be cleared, got %#v", updated.ModelStates)
+	}
+}
+
+func TestDeleteAuthFile_PrunesCodexUsageState(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	authDir := t.TempDir()
+	fileName := "codex-usage-prune.json"
+	filePath := filepath.Join(authDir, fileName)
+	fileData := []byte(`{"type":"codex","email":"usage@example.com"}`)
+	if errWrite := os.WriteFile(filePath, fileData, 0o600); errWrite != nil {
+		t.Fatalf("failed to write auth file: %v", errWrite)
+	}
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	authID := fileName
+	if _, errRegister := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       authID,
+		FileName: fileName,
+		Provider: "codex",
+		Metadata: map[string]any{"type": "codex", "email": "usage@example.com"},
+		Attributes: map[string]string{
+			"path": filePath,
+		},
+	}); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+	h.setSelectedCodexAuthID(authID)
+	h.tokenStore = store
+	h.codexUsageStateRef().codexUsageByAuth = map[string]codexAuthUsageStatus{
+		authID: {
+			AuthID:   authID,
+			FileName: fileName,
+			Status:   "ok",
+			HasUsage: true,
+			Usage: &codexUsagePayload{
+				PlanType: "team",
+				RateLimit: &codexUsageRateLimit{
+					PrimaryWindow: &codexUsageWindow{UsedPercent: 30, LimitWindowSeconds: 18000},
+				},
+			},
+		},
+		"codex-other": {
+			AuthID:   "codex-other",
+			FileName: "codex-other.json",
+			Status:   "ok",
+			HasUsage: true,
+			Usage: &codexUsagePayload{
+				PlanType: "team",
+				RateLimit: &codexUsageRateLimit{
+					PrimaryWindow: &codexUsageWindow{UsedPercent: 40, LimitWindowSeconds: 18000},
+				},
+			},
+		},
+	}
+	h.updateCodexUsageState(h.codexUsageByAuthSnapshot(), authID, time.Now().UTC(), false)
+
+	deleteRec := httptest.NewRecorder()
+	deleteCtx, _ := gin.CreateTestContext(deleteRec)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v0/management/auth-files?name="+url.QueryEscape(fileName), nil)
+	deleteCtx.Request = deleteReq
+	h.DeleteAuthFile(deleteCtx)
+
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected delete status %d, got %d with body %s", http.StatusOK, deleteRec.Code, deleteRec.Body.String())
+	}
+	snapshot := h.codexUsageByAuthSnapshot()
+	if _, ok := snapshot[authID]; ok {
+		t.Fatalf("expected deleted auth usage to be pruned, got %#v", snapshot[authID])
+	}
+	if _, ok := snapshot["codex-other"]; !ok {
+		t.Fatal("expected unrelated auth usage to remain")
+	}
+	_, summary, _ := h.codexUsageSnapshot()
+	if summary.SelectedAuthID != "" {
+		t.Fatalf("expected selected auth to be cleared after delete, got %q", summary.SelectedAuthID)
 	}
 }

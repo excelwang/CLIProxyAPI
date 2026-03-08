@@ -261,6 +261,9 @@ type BaseAPIHandler struct {
 
 	// Cfg holds the current application configuration.
 	Cfg *config.SDKConfig
+
+	// SelectedAuthIDCallback observes the auth selected for request execution.
+	SelectedAuthIDCallback func(string)
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -286,6 +289,14 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *B
 //   - clients: The new slice of AI service clients
 //   - cfg: The new application configuration
 func (h *BaseAPIHandler) UpdateClients(cfg *config.SDKConfig) { h.Cfg = cfg }
+
+// SetSelectedAuthIDCallback registers a callback invoked with the auth ID selected for execution.
+func (h *BaseAPIHandler) SetSelectedAuthIDCallback(callback func(string)) {
+	if h == nil {
+		return
+	}
+	h.SelectedAuthIDCallback = callback
+}
 
 // GetAlt extracts the 'alt' parameter from the request query string.
 // It checks both 'alt' and '$alt' parameters and returns the appropriate value.
@@ -339,6 +350,9 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		}
 	}
 	newCtx, cancel := context.WithCancel(parentCtx)
+	if h != nil && h.SelectedAuthIDCallback != nil && selectedAuthIDCallbackFromContext(newCtx) == nil {
+		newCtx = WithSelectedAuthIDCallback(newCtx, h.SelectedAuthIDCallback)
+	}
 	if requestCtx != nil && requestCtx != parentCtx {
 		go func() {
 			select {

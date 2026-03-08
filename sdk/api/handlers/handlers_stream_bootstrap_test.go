@@ -503,6 +503,26 @@ func TestExecuteStreamWithAuthManager_PinnedAuthKeepsSameUpstream(t *testing.T) 
 	}
 }
 
+func TestGetContextWithCancel_InheritsBaseSelectedAuthCallback(t *testing.T) {
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil)
+	selectedAuthID := ""
+	handler.SetSelectedAuthIDCallback(func(authID string) {
+		selectedAuthID = authID
+	})
+
+	ctx, cancel := handler.GetContextWithCancel(nil, nil, context.Background())
+	defer cancel()
+
+	callback := selectedAuthIDCallbackFromContext(ctx)
+	if callback == nil {
+		t.Fatal("expected selected auth callback in derived context")
+	}
+	callback("auth-test")
+	if selectedAuthID != "auth-test" {
+		t.Fatalf("selectedAuthID = %q, want %q", selectedAuthID, "auth-test")
+	}
+}
+
 func TestExecuteStreamWithAuthManager_SelectedAuthCallbackReceivesAuthID(t *testing.T) {
 	executor := &authAwareStreamExecutor{}
 	manager := coreauth.NewManager(nil, nil, nil)

@@ -929,7 +929,9 @@ func (h *Handler) disableAuth(ctx context.Context, id string) {
 		return
 	}
 	if auth, ok := h.authManager.GetByID(id); ok && auth != nil {
-		_ = h.authManager.Remove(ctx, auth.ID)
+		if err := h.authManager.Remove(ctx, auth.ID); err == nil {
+			h.removeCodexUsageAuthState(auth.ID)
+		}
 		return
 	}
 	authID := h.authIDForPath(id)
@@ -937,7 +939,9 @@ func (h *Handler) disableAuth(ctx context.Context, id string) {
 		return
 	}
 	if _, ok := h.authManager.GetByID(authID); ok {
-		_ = h.authManager.Remove(ctx, authID)
+		if err := h.authManager.Remove(ctx, authID); err == nil {
+			h.removeCodexUsageAuthState(authID)
+		}
 	}
 }
 
