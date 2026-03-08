@@ -182,7 +182,17 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		}
 		dataChan, _, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, requestJSON, "")
 
-		completedOutput, errForward := h.forwardResponsesWebsocket(c, conn, cliCancel, dataChan, errChan, &wsBodyLog, passthroughSessionID)
+		completedOutput, errForward, resetPinnedAuth := h.forwardResponsesWebsocket(c, conn, cliCancel, dataChan, errChan, &wsBodyLog, passthroughSessionID)
+		if resetPinnedAuth {
+			if strings.TrimSpace(pinnedAuthID) != "" {
+				log.Infof("responses websocket: reset pinned auth id=%s auth=%s", passthroughSessionID, strings.TrimSpace(pinnedAuthID))
+			}
+			pinnedAuthID = ""
+			if h != nil && h.AuthManager != nil {
+				h.AuthManager.CloseExecutionSession(passthroughSessionID)
+				log.Infof("responses websocket: upstream execution session reset id=%s", passthroughSessionID)
+			}
+		}
 		if errForward != nil {
 			wsTerminateErr = errForward
 			appendWebsocketEvent(&wsBodyLog, "disconnect", []byte(errForward.Error()))
@@ -600,7 +610,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 	errs <-chan *interfaces.ErrorMessage,
 	wsBodyLog *strings.Builder,
 	sessionID string,
-) ([]byte, error) {
+) ([]byte, error, bool) {
 	completed := false
 	completedOutput := []byte("[]")
 
@@ -608,12 +618,13 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 		select {
 		case <-c.Request.Context().Done():
 			cancel(c.Request.Context().Err())
-			return completedOutput, c.Request.Context().Err()
+			return completedOutput, c.Request.Context().Err(), false
 		case errMsg, ok := <-errs:
 			if !ok {
 				errs = nil
 				continue
 			}
+			resetPinnedAuth := shouldResetPinnedAuthForWebsocketError(errMsg)
 			if errMsg != nil {
 				h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
 				markAPIResponseTimestamp(c)
@@ -634,7 +645,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 					// 	errWrite,
 					// )
 					cancel(errMsg.Error)
-					return completedOutput, errWrite
+					return completedOutput, errWrite, resetPinnedAuth
 				}
 			}
 			if errMsg != nil {
@@ -642,7 +653,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			} else {
 				cancel(nil)
 			}
-			return completedOutput, nil
+			return completedOutput, nil, resetPinnedAuth
 		case chunk, ok := <-data:
 			if !ok {
 				if !completed {
@@ -669,13 +680,13 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 							errWrite,
 						)
 						cancel(errMsg.Error)
-						return completedOutput, errWrite
+						return completedOutput, errWrite, false
 					}
 					cancel(errMsg.Error)
-					return completedOutput, nil
+					return completedOutput, nil, false
 				}
 				cancel(nil)
-				return completedOutput, nil
+				return completedOutput, nil, false
 			}
 
 			payloads := websocketJSONPayloadsFromChunk(chunk)
@@ -702,11 +713,34 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 						errWrite,
 					)
 					cancel(errWrite)
-					return completedOutput, errWrite
+					return completedOutput, errWrite, false
 				}
 			}
 		}
 	}
+}
+
+func shouldResetPinnedAuthForWebsocketError(errMsg *interfaces.ErrorMessage) bool {
+	if errMsg == nil {
+		return false
+	}
+	switch errMsg.StatusCode {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests:
+		return true
+	}
+	if errMsg.Error == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(errMsg.Error.Error()))
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "usage_limit_reached") ||
+		strings.Contains(text, "insufficient_quota") ||
+		strings.Contains(text, "quota exceeded") ||
+		strings.Contains(text, "quota exhausted") ||
+		strings.Contains(text, "token_invalidated") ||
+		strings.Contains(text, "authentication token has been invalidated")
 }
 
 func responseCompletedOutputFromPayload(payload []byte) []byte {
