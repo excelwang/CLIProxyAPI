@@ -520,22 +520,20 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 					ResetAt:            1900003600,
 				},
 			},
-			AdditionalRateLimits: []codexUsageAdditionalRateLimit{
-				{
-					LimitName:      "messages",
-					MeteredFeature: "cloud",
-					RateLimit: &codexUsageRateLimit{
-						Allowed:      true,
-						LimitReached: false,
-						PrimaryWindow: &codexUsageWindow{
-							UsedPercent:        10,
-							LimitWindowSeconds: 86400,
-							ResetAfterSeconds:  600,
-							ResetAt:            1900000600,
-						},
+			AdditionalRateLimits: []codexUsageAdditionalRateLimit{{
+				LimitName:      "messages",
+				MeteredFeature: "cloud",
+				RateLimit: &codexUsageRateLimit{
+					Allowed:      true,
+					LimitReached: false,
+					PrimaryWindow: &codexUsageWindow{
+						UsedPercent:        10,
+						LimitWindowSeconds: 86400,
+						ResetAfterSeconds:  600,
+						ResetAt:            1900000600,
 					},
 				},
-			},
+			}},
 		})
 	}))
 	defer whamServer.Close()
@@ -571,22 +569,20 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 					ResetAt:            1900007200,
 				},
 			},
-			AdditionalRateLimits: []codexUsageAdditionalRateLimit{
-				{
-					LimitName:      "messages",
-					MeteredFeature: "cloud",
-					RateLimit: &codexUsageRateLimit{
-						Allowed:      false,
-						LimitReached: true,
-						PrimaryWindow: &codexUsageWindow{
-							UsedPercent:        50,
-							LimitWindowSeconds: 86400,
-							ResetAfterSeconds:  900,
-							ResetAt:            1900000900,
-						},
+			AdditionalRateLimits: []codexUsageAdditionalRateLimit{{
+				LimitName:      "messages",
+				MeteredFeature: "cloud",
+				RateLimit: &codexUsageRateLimit{
+					Allowed:      false,
+					LimitReached: true,
+					PrimaryWindow: &codexUsageWindow{
+						UsedPercent:        50,
+						LimitWindowSeconds: 86400,
+						ResetAfterSeconds:  900,
+						ResetAt:            1900000900,
 					},
 				},
-			},
+			}},
 		})
 	}))
 	defer apiServer.Close()
@@ -637,8 +633,6 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 		codexUsageByAuth: make(map[string]codexAuthUsageStatus),
 		codexUsageCompat: defaultCodexUsagePayload(),
 	})
-	// Keep this test deterministic; disable async opportunistic worker.
-	h.codexUsageStateRef().codexUsageAsyncPoll.Store(true)
 
 	h.setSelectedCodexAuthID("codex-wham")
 	h.refreshCodexUsageFromCacheTTL(context.Background())
@@ -650,8 +644,8 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 	if atomic.LoadInt32(&whamCalls) != 1 {
 		t.Fatalf("expected 1 wham call, got %d", whamCalls)
 	}
-	if atomic.LoadInt32(&apiCalls) != 1 {
-		t.Fatalf("expected 1 api call on first refresh (opportunistic correction), got %d", apiCalls)
+	if atomic.LoadInt32(&apiCalls) != 0 {
+		t.Fatalf("expected no api call for non-selected auth, got %d", apiCalls)
 	}
 	if summary.SelectedAuthID != "codex-wham" {
 		t.Fatalf("expected selected auth codex-wham, got %q", summary.SelectedAuthID)
@@ -662,14 +656,18 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 	if compat.RateLimit == nil || compat.RateLimit.PrimaryWindow == nil {
 		t.Fatalf("expected aggregated primary window")
 	}
-	if compat.RateLimit.PrimaryWindow.UsedPercent != 27 {
-		t.Fatalf("expected aggregated 5h used_percent=27, got %d", compat.RateLimit.PrimaryWindow.UsedPercent)
+	snapshot := h.codexUsageByAuthSnapshot()
+	if got := snapshot["codex-wham"].Usage.RateLimit.PrimaryWindow.UsedPercent; got != 20 {
+		t.Fatalf("expected selected auth cached 5h used_percent=20, got %d", got)
+	}
+	if snapshot["codex-api"].Usage != nil {
+		t.Fatal("expected non-selected auth to remain cache-only before it is selected")
 	}
 	if summary.AuthFilesTotal != 3 {
 		t.Fatalf("expected all codex auth files cached, got %d", summary.AuthFilesTotal)
 	}
-	if summary.AuthFilesWithUsage != 2 {
-		t.Fatalf("expected 2 auths with usage after opportunistic correction, got %d", summary.AuthFilesWithUsage)
+	if summary.AuthFilesWithUsage != 1 {
+		t.Fatalf("expected only selected auth to have usage after first refresh, got %d", summary.AuthFilesWithUsage)
 	}
 
 	// Within TTL no upstream calls should be issued.
@@ -677,22 +675,25 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 	if atomic.LoadInt32(&whamCalls) != 1 {
 		t.Fatalf("expected still 1 wham call due to TTL, got %d", whamCalls)
 	}
-	if atomic.LoadInt32(&apiCalls) != 1 {
-		t.Fatalf("expected still 1 api call due to TTL, got %d", apiCalls)
+	if atomic.LoadInt32(&apiCalls) != 0 {
+		t.Fatalf("expected still 0 api calls for non-selected auth due to cache-only policy, got %d", apiCalls)
 	}
 
-	// Selection changes should still follow per-auth TTL.
+	// Selection changes poll the newly selected auth if it has never been refreshed.
 	h.setSelectedCodexAuthID("codex-api")
 	h.refreshCodexUsageFromCacheTTL(context.Background())
 	if atomic.LoadInt32(&whamCalls) != 1 {
 		t.Fatalf("expected wham call count unchanged on selection change, got %d", whamCalls)
 	}
 	if atomic.LoadInt32(&apiCalls) != 1 {
-		t.Fatalf("expected api call count unchanged on selection change within ttl, got %d", apiCalls)
+		t.Fatalf("expected first poll for newly selected auth, got %d", apiCalls)
 	}
 	_, summary, _ = h.codexUsageSnapshot()
 	if summary.SelectedAuthID != "codex-api" {
 		t.Fatalf("expected selected auth codex-api, got %q", summary.SelectedAuthID)
+	}
+	if summary.AuthFilesWithUsage != 2 {
+		t.Fatalf("expected both selected auths with cached usage after second selection, got %d", summary.AuthFilesWithUsage)
 	}
 
 	// Force selected auth TTL to expire; only selected auth should be refreshed.
@@ -703,10 +704,10 @@ func TestRefreshCodexUsageFromCacheTTL_PollsSelectedAuthPerTTL(t *testing.T) {
 	h.codexUsageStateRef().codexUsageMu.Unlock()
 	h.refreshCodexUsageFromCacheTTL(context.Background())
 	if atomic.LoadInt32(&whamCalls) != 1 {
-		t.Fatalf("expected wham call count unchanged when wham ttl not expired, got %d", whamCalls)
+		t.Fatalf("expected wham call count unchanged when wham is not selected, got %d", whamCalls)
 	}
 	if atomic.LoadInt32(&apiCalls) != 2 {
-		t.Fatalf("expected one additional api poll after ttl expiry, got %d", apiCalls)
+		t.Fatalf("expected one additional api poll after selected auth ttl expiry, got %d", apiCalls)
 	}
 }
 
@@ -1227,7 +1228,7 @@ func TestRefreshCodexUsageFromCacheTTL_ClearsUsageOnUnauthorized(t *testing.T) {
 	}
 }
 
-func TestRefreshCodexUsageFromCacheTTL_SoftErrorForcesImmediateRepollAndFallsBackToCache(t *testing.T) {
+func TestRefreshCodexUsageFromCacheTTL_SoftErrorUsesCacheUntilTTLExpires(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	var mode int32
@@ -1309,19 +1310,46 @@ func TestRefreshCodexUsageFromCacheTTL_SoftErrorForcesImmediateRepollAndFallsBac
 		t.Fatalf("expected initial used_percent=25, got %d", initial.Usage.RateLimit.PrimaryWindow.UsedPercent)
 	}
 
-	// Mark as soft error with valid cached usage and place it past soft-error retry window.
+	// Inside TTL, soft errors must keep using cache and must not repoll.
 	h.codexUsageStateRef().codexUsageMu.Lock()
 	st := h.codexUsageStateRef().codexUsageByAuth["codex-auth"]
 	st.Status = "error"
 	st.Error = "Get \"https://chatgpt.com/backend-api/wham/usage\": EOF"
-	st.LastPolledAt = time.Now().Add(-(codexUsageSoftErrorRetry + time.Second)).UTC()
+	st.LastPolledAt = time.Now().UTC()
 	h.codexUsageStateRef().codexUsageByAuth["codex-auth"] = st
 	h.codexUsageStateRef().codexUsageMu.Unlock()
 
 	atomic.StoreInt32(&mode, 1)
 	h.refreshCodexUsageFromCacheTTL(context.Background())
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expected no repoll before ttl expiry, calls=%d", calls)
+	}
+
+	stillCached := h.codexUsageByAuthSnapshot()["codex-auth"]
+	if stillCached.Status != "error" {
+		t.Fatalf("expected status to remain error while serving cache, got %q", stillCached.Status)
+	}
+	if !stillCached.HasUsage || stillCached.Usage == nil || stillCached.Usage.RateLimit == nil || stillCached.Usage.RateLimit.PrimaryWindow == nil {
+		t.Fatal("expected cached usage to be kept while ttl is active")
+	}
+	if stillCached.Usage.RateLimit.PrimaryWindow.UsedPercent != 25 {
+		t.Fatalf("expected cached used_percent=25 before ttl expiry, got %d", stillCached.Usage.RateLimit.PrimaryWindow.UsedPercent)
+	}
+	_, _, hasData := h.codexUsageSnapshot()
+	if !hasData {
+		t.Fatal("expected hasData=true while cache is still usable")
+	}
+
+	// Once TTL expires, the selected auth may be retried.
+	h.codexUsageStateRef().codexUsageMu.Lock()
+	st = h.codexUsageStateRef().codexUsageByAuth["codex-auth"]
+	st.LastPolledAt = time.Now().Add(-(codexUsagePollInterval + time.Second)).UTC()
+	h.codexUsageStateRef().codexUsageByAuth["codex-auth"] = st
+	h.codexUsageStateRef().codexUsageMu.Unlock()
+
+	h.refreshCodexUsageFromCacheTTL(context.Background())
 	if atomic.LoadInt32(&calls) != 2 {
-		t.Fatalf("expected soft error to bypass TTL and repoll immediately, calls=%d", calls)
+		t.Fatalf("expected one retry after ttl expiry, calls=%d", calls)
 	}
 
 	afterFailure := h.codexUsageByAuthSnapshot()["codex-auth"]
@@ -1334,33 +1362,18 @@ func TestRefreshCodexUsageFromCacheTTL_SoftErrorForcesImmediateRepollAndFallsBac
 	if afterFailure.Usage.RateLimit.PrimaryWindow.UsedPercent != 25 {
 		t.Fatalf("expected cached used_percent=25 after failure, got %d", afterFailure.Usage.RateLimit.PrimaryWindow.UsedPercent)
 	}
-	_, _, hasData := h.codexUsageSnapshot()
-	if !hasData {
-		t.Fatal("expected hasData=true when soft failure falls back to cache")
-	}
 
-	// While still in soft error and inside retry window, next request should not repoll.
+	// After another TTL interval, the next poll may recover the auth.
 	atomic.StoreInt32(&mode, 2)
-	h.refreshCodexUsageFromCacheTTL(context.Background())
-	if atomic.LoadInt32(&calls) != 2 {
-		t.Fatalf("expected no immediate repoll while soft error retry window active, calls=%d", calls)
-	}
-
-	stillError := h.codexUsageByAuthSnapshot()["codex-auth"]
-	if stillError.Status != "error" {
-		t.Fatalf("expected status to remain error before retry window, got %q", stillError.Status)
-	}
-
-	// Force retry window to expire, then recover on next request.
 	h.codexUsageStateRef().codexUsageMu.Lock()
 	st = h.codexUsageStateRef().codexUsageByAuth["codex-auth"]
-	st.LastPolledAt = time.Now().Add(-(codexUsageSoftErrorRetry + time.Second)).UTC()
+	st.LastPolledAt = time.Now().Add(-(codexUsagePollInterval + time.Second)).UTC()
 	h.codexUsageStateRef().codexUsageByAuth["codex-auth"] = st
 	h.codexUsageStateRef().codexUsageMu.Unlock()
 
 	h.refreshCodexUsageFromCacheTTL(context.Background())
 	if atomic.LoadInt32(&calls) != 3 {
-		t.Fatalf("expected repoll after soft error retry window, calls=%d", calls)
+		t.Fatalf("expected recovery poll after ttl expiry, calls=%d", calls)
 	}
 
 	afterRecovery := h.codexUsageByAuthSnapshot()["codex-auth"]
@@ -1520,7 +1533,7 @@ func TestRefreshCodexUsageFromCacheTTL_DropsMissingFileBackedAuthFromAggregation
 	}
 }
 
-func TestRefreshCodexUsageCandidates_PrunesRemovedAuthFromCache(t *testing.T) {
+func TestRefreshCodexUsageFromCacheTTL_PrunesRemovedAuthFromCache(t *testing.T) {
 	store := &memoryAuthStore{}
 	manager := coreauth.NewManager(store, nil, nil)
 	ctx := context.Background()
@@ -1571,7 +1584,7 @@ func TestRefreshCodexUsageCandidates_PrunesRemovedAuthFromCache(t *testing.T) {
 	})
 	h.setSelectedCodexAuthID("")
 
-	h.refreshCodexUsageCandidates(context.Background(), []string{"codex-live"})
+	h.refreshCodexUsageFromCacheTTL(context.Background())
 
 	snapshot := h.codexUsageByAuthSnapshot()
 	if _, ok := snapshot["codex-stale"]; ok {

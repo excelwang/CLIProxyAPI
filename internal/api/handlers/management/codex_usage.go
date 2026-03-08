@@ -22,7 +22,6 @@ import (
 
 const (
 	codexUsagePollInterval   = 60 * time.Second
-	codexUsageSoftErrorRetry = 15 * time.Second
 	codexUsageRequestTimeout = 20 * time.Second
 	codexUsageDefaultBaseURL = "https://chatgpt.com/backend-api"
 	codexFreePlanWeight      = 0.2
