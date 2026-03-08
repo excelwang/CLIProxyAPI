@@ -67,6 +67,7 @@ type codexUsageAuthFileExtensionItem struct {
 	FileName     string            `json:"file_name,omitempty"`
 	Account      string            `json:"account,omitempty"`
 	PlanType     string            `json:"plan_type,omitempty"`
+	Priority     int               `json:"priority,omitempty"`
 	Status       string            `json:"status,omitempty"`
 	Error        string            `json:"error,omitempty"`
 	ErrorSummary string            `json:"error_summary,omitempty"`
@@ -81,27 +82,62 @@ type codexUsageRecoveryEvent struct {
 	ReleaseUnits             float64 `json:"release_units,omitempty"`
 	CumulativeReleaseUnits   float64 `json:"cumulative_release_units,omitempty"`
 	CumulativeReleasePercent float64 `json:"cumulative_release_percent,omitempty"`
+	AvailableUnits           float64 `json:"available_units,omitempty"`
+	AvailablePercent         float64 `json:"available_percent,omitempty"`
 }
 
 type codexUsageRecoveryWindow struct {
-	TotalUnits              float64                   `json:"total_units,omitempty"`
-	LockedUnits             float64                   `json:"locked_units,omitempty"`
-	NextWaitSeconds         int                       `json:"next_wait_seconds,omitempty"`
-	NextResetAt             int64                     `json:"next_reset_at,omitempty"`
-	NextReleaseUnits        float64                   `json:"next_release_units,omitempty"`
-	SignificantWaitSeconds  int                       `json:"significant_wait_seconds,omitempty"`
-	SignificantResetAt      int64                     `json:"significant_reset_at,omitempty"`
-	SignificantTargetUnits  float64                   `json:"significant_target_units,omitempty"`
-	SignificantReleaseUnits float64                   `json:"significant_release_units,omitempty"`
-	FullWaitSeconds         int                       `json:"full_wait_seconds,omitempty"`
-	FullResetAt             int64                     `json:"full_reset_at,omitempty"`
-	FullReleaseUnits        float64                   `json:"full_release_units,omitempty"`
-	Events                  []codexUsageRecoveryEvent `json:"events,omitempty"`
+	TotalUnits                  float64                   `json:"total_units,omitempty"`
+	LockedUnits                 float64                   `json:"locked_units,omitempty"`
+	AvailableUnitsNow           float64                   `json:"available_units_now,omitempty"`
+	AvailablePercentNow         float64                   `json:"available_percent_now,omitempty"`
+	NextWaitSeconds             int                       `json:"next_wait_seconds,omitempty"`
+	NextResetAt                 int64                     `json:"next_reset_at,omitempty"`
+	NextReleaseUnits            float64                   `json:"next_release_units,omitempty"`
+	NextAvailableUnits          float64                   `json:"next_available_units,omitempty"`
+	NextAvailablePercent        float64                   `json:"next_available_percent,omitempty"`
+	SignificantWaitSeconds      int                       `json:"significant_wait_seconds,omitempty"`
+	SignificantResetAt          int64                     `json:"significant_reset_at,omitempty"`
+	SignificantTargetUnits      float64                   `json:"significant_target_units,omitempty"`
+	SignificantReleaseUnits     float64                   `json:"significant_release_units,omitempty"`
+	SignificantAvailableUnits   float64                   `json:"significant_available_units,omitempty"`
+	SignificantAvailablePercent float64                   `json:"significant_available_percent,omitempty"`
+	FullWaitSeconds             int                       `json:"full_wait_seconds,omitempty"`
+	FullResetAt                 int64                     `json:"full_reset_at,omitempty"`
+	FullReleaseUnits            float64                   `json:"full_release_units,omitempty"`
+	FullAvailableUnits          float64                   `json:"full_available_units,omitempty"`
+	FullAvailablePercent        float64                   `json:"full_available_percent,omitempty"`
+	Events                      []codexUsageRecoveryEvent `json:"events,omitempty"`
+}
+
+type codexUsageCombinedRecovery struct {
+	TotalUnits                  float64                   `json:"total_units,omitempty"`
+	AvailableUnitsNow           float64                   `json:"available_units_now,omitempty"`
+	AvailablePercentNow         float64                   `json:"available_percent_now,omitempty"`
+	NextWaitSeconds             int                       `json:"next_wait_seconds,omitempty"`
+	NextResetAt                 int64                     `json:"next_reset_at,omitempty"`
+	NextAvailableUnits          float64                   `json:"next_available_units,omitempty"`
+	NextAvailablePercent        float64                   `json:"next_available_percent,omitempty"`
+	SignificantDeltaUnits       float64                   `json:"significant_delta_units,omitempty"`
+	SignificantWaitSeconds      int                       `json:"significant_wait_seconds,omitempty"`
+	SignificantResetAt          int64                     `json:"significant_reset_at,omitempty"`
+	SignificantAvailableUnits   float64                   `json:"significant_available_units,omitempty"`
+	SignificantAvailablePercent float64                   `json:"significant_available_percent,omitempty"`
+	FullWaitSeconds             int                       `json:"full_wait_seconds,omitempty"`
+	FullResetAt                 int64                     `json:"full_reset_at,omitempty"`
+	FullAvailableUnits          float64                   `json:"full_available_units,omitempty"`
+	FullAvailablePercent        float64                   `json:"full_available_percent,omitempty"`
+	FiveHourBlockedUnitsNow     float64                   `json:"five_hour_blocked_units_now,omitempty"`
+	FiveHourBlockedPercentNow   float64                   `json:"five_hour_blocked_percent_now,omitempty"`
+	FiveHourNextWaitSeconds     int                       `json:"five_hour_next_wait_seconds,omitempty"`
+	FiveHourNextResetAt         int64                     `json:"five_hour_next_reset_at,omitempty"`
+	Events                      []codexUsageRecoveryEvent `json:"events,omitempty"`
 }
 
 type codexUsageRecovery struct {
-	FiveHour *codexUsageRecoveryWindow `json:"five_hour,omitempty"`
-	Week     *codexUsageRecoveryWindow `json:"week,omitempty"`
+	FiveHour *codexUsageRecoveryWindow   `json:"five_hour,omitempty"`
+	Week     *codexUsageRecoveryWindow   `json:"week,omitempty"`
+	Combined *codexUsageCombinedRecovery `json:"combined,omitempty"`
 }
 
 type codexUsageExtensions struct {
@@ -129,6 +165,7 @@ type codexAuthUsageStatus struct {
 	FileName      string             `json:"file_name,omitempty"`
 	Email         string             `json:"email,omitempty"`
 	PlanType      string             `json:"plan_type,omitempty"`
+	Priority      int                `json:"priority,omitempty"`
 	AccountID     string             `json:"account_id,omitempty"`
 	BaseURL       string             `json:"base_url,omitempty"`
 	PathStyle     string             `json:"path_style,omitempty"`
@@ -483,7 +520,7 @@ func (h *Handler) updateCodexUsageState(current map[string]codexAuthUsageStatus,
 	}
 	compatPayload, totalSummary, withUsage := aggregateCodexUsage(current, h.codexFreePlanWeight(), h.codexProPlanWeight())
 	fillCodexCompatAccountEmailFromSelected(&compatPayload, current, selectedAuthID)
-	compatPayload.Extensions = buildCodexUsageExtensions(current, now, h.codexFreePlanWeight(), h.codexProPlanWeight())
+	compatPayload.Extensions = buildCodexUsageExtensions(current, now, h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup())
 	authErrors := 0
 	authList := make([]codexAuthUsageStatus, 0, len(current))
 	for _, item := range current {
@@ -594,7 +631,7 @@ func fillCodexCompatAccountEmailFromSelected(compat *codexUsagePayload, current 
 	}
 }
 
-func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time.Time, freePlanWeight, proPlanWeight float64) *codexUsageExtensions {
+func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time.Time, freePlanWeight, proPlanWeight float64, authBaseDir string, authLookup map[string]*coreauth.Auth) *codexUsageExtensions {
 	if len(current) == 0 {
 		return nil
 	}
@@ -613,11 +650,18 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 			account = strings.TrimSpace(status.Usage.AccountID)
 		}
 
+		fileName := strings.TrimSpace(status.FileName)
+		if fileName == "" {
+			if authID := strings.TrimSpace(status.AuthID); strings.HasSuffix(strings.ToLower(authID), ".json") {
+				fileName = authID
+			}
+		}
 		item := codexUsageAuthFileExtensionItem{
 			AuthID:       strings.TrimSpace(status.AuthID),
-			FileName:     strings.TrimSpace(status.FileName),
+			FileName:     fileName,
 			Account:      account,
 			PlanType:     strings.TrimSpace(status.PlanType),
+			Priority:     codexStatusPriority(status, authLookup[strings.TrimSpace(status.AuthID)], authBaseDir),
 			Status:       strings.TrimSpace(status.Status),
 			Error:        strings.TrimSpace(status.Error),
 			ErrorSummary: codexUsageErrorSummary(status.Error),
@@ -660,6 +704,99 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 		ActiveAuthFiles: items,
 		Recovery:        buildCodexUsageRecovery(current, now, freePlanWeight, proPlanWeight),
 	}
+}
+
+func (h *Handler) codexUsageAuthBaseDir() string {
+	if h == nil {
+		return ""
+	}
+	if h.cfg != nil {
+		if baseDir := strings.TrimSpace(h.cfg.AuthDir); baseDir != "" {
+			return baseDir
+		}
+	}
+	if cfgPath := strings.TrimSpace(h.configFilePath); cfgPath != "" {
+		return filepath.Dir(cfgPath)
+	}
+	return ""
+}
+
+func (h *Handler) codexUsageAuthLookup() map[string]*coreauth.Auth {
+	if h == nil || h.authManager == nil {
+		return nil
+	}
+	lookup := make(map[string]*coreauth.Auth)
+	for _, auth := range h.authManager.List() {
+		if !shouldTrackCodexUsageAuth(auth) {
+			continue
+		}
+		authID := strings.TrimSpace(auth.ID)
+		if authID == "" {
+			continue
+		}
+		lookup[authID] = auth
+	}
+	return lookup
+}
+
+func codexStatusPriority(status codexAuthUsageStatus, auth *coreauth.Auth, authBaseDir string) int {
+	if status.Priority != 0 {
+		return status.Priority
+	}
+	if auth != nil {
+		if priority := codexAuthPriority(auth); priority != 0 {
+			return priority
+		}
+	}
+	fileName := strings.TrimSpace(status.FileName)
+	if fileName == "" && auth != nil {
+		fileName = strings.TrimSpace(auth.FileName)
+	}
+	if fileName == "" {
+		if authID := strings.TrimSpace(status.AuthID); strings.HasSuffix(strings.ToLower(authID), ".json") {
+			fileName = authID
+		}
+	}
+	if fileName == "" {
+		return 0
+	}
+	path := fileName
+	if !filepath.IsAbs(path) && strings.TrimSpace(authBaseDir) != "" {
+		path = filepath.Join(strings.TrimSpace(authBaseDir), path)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(content, &metadata); err != nil {
+		return 0
+	}
+	if value, ok := metadata["priority"]; ok {
+		if priority, okPriority := codexStatusPriorityValue(value); okPriority {
+			return priority
+		}
+	}
+	return 0
+}
+
+func codexStatusPriorityValue(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		priority, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return priority, true
+		}
+	}
+	return 0, false
 }
 
 func codexAuthUsageRecentTime(status codexAuthUsageStatus) time.Time {
@@ -845,8 +982,9 @@ func buildCodexUsageRecovery(current map[string]codexAuthUsageStatus, now time.T
 	out := &codexUsageRecovery{
 		FiveHour: buildCodexUsageRecoveryWindow(now, fiveHour),
 		Week:     buildCodexUsageRecoveryWindow(now, week),
+		Combined: buildCodexUsageCombinedRecovery(now, current, freePlanWeight, proPlanWeight),
 	}
-	if out.FiveHour == nil && out.Week == nil {
+	if out.FiveHour == nil && out.Week == nil && out.Combined == nil {
 		return nil
 	}
 	return out
@@ -891,10 +1029,15 @@ func buildCodexUsageRecoveryWindow(now time.Time, contributions []codexRecoveryC
 	if totalUnits <= 0 {
 		return nil
 	}
+	availableNow := math.Max(totalUnits-lockedUnits, 0)
 	window := &codexUsageRecoveryWindow{
 		TotalUnits:             roundFloat(totalUnits, 2),
 		LockedUnits:            roundFloat(lockedUnits, 2),
+		AvailableUnitsNow:      roundFloat(availableNow, 2),
+		AvailablePercentNow:    roundFloat((availableNow/totalUnits)*100, 2),
 		SignificantTargetUnits: roundFloat(math.Max(totalUnits*0.05, 0.5), 2),
+		FullAvailableUnits:     roundFloat(availableNow, 2),
+		FullAvailablePercent:   roundFloat((availableNow/totalUnits)*100, 2),
 	}
 	if len(releaseByReset) == 0 {
 		return window
@@ -916,35 +1059,262 @@ func buildCodexUsageRecoveryWindow(now time.Time, contributions []codexRecoveryC
 		if wait < 0 {
 			wait = 0
 		}
+		availableUnits := availableNow + cumulative
 		event := codexUsageRecoveryEvent{
 			ResetAt:                  resetAt,
 			WaitSeconds:              wait,
 			ReleaseUnits:             roundFloat(release, 2),
 			CumulativeReleaseUnits:   roundFloat(cumulative, 2),
 			CumulativeReleasePercent: roundFloat((cumulative/totalUnits)*100, 2),
+			AvailableUnits:           roundFloat(availableUnits, 2),
+			AvailablePercent:         roundFloat((availableUnits/totalUnits)*100, 2),
 		}
 		events = append(events, event)
 		if idx == 0 {
 			window.NextWaitSeconds = wait
 			window.NextResetAt = resetAt
 			window.NextReleaseUnits = roundFloat(release, 2)
+			window.NextAvailableUnits = roundFloat(availableUnits, 2)
+			window.NextAvailablePercent = roundFloat((availableUnits/totalUnits)*100, 2)
 		}
 		if window.SignificantResetAt == 0 && cumulative >= significantTarget {
 			window.SignificantWaitSeconds = wait
 			window.SignificantResetAt = resetAt
 			window.SignificantReleaseUnits = roundFloat(cumulative, 2)
+			window.SignificantAvailableUnits = roundFloat(availableUnits, 2)
+			window.SignificantAvailablePercent = roundFloat((availableUnits/totalUnits)*100, 2)
 		}
 		window.FullWaitSeconds = wait
 		window.FullResetAt = resetAt
 		window.FullReleaseUnits = roundFloat(cumulative, 2)
+		window.FullAvailableUnits = roundFloat(availableUnits, 2)
+		window.FullAvailablePercent = roundFloat((availableUnits/totalUnits)*100, 2)
 	}
 	if window.SignificantResetAt == 0 {
 		window.SignificantWaitSeconds = window.FullWaitSeconds
 		window.SignificantResetAt = window.FullResetAt
 		window.SignificantReleaseUnits = window.FullReleaseUnits
+		window.SignificantAvailableUnits = window.FullAvailableUnits
+		window.SignificantAvailablePercent = window.FullAvailablePercent
 	}
 	window.Events = events
 	return window
+}
+
+type codexCombinedRecoveryContribution struct {
+	weight         float64
+	weekAvailable  float64
+	weekLocked     float64
+	weekResetAt    int64
+	fiveBlockedNow bool
+	fiveResetAt    int64
+}
+
+func buildCodexUsageCombinedRecovery(now time.Time, current map[string]codexAuthUsageStatus, freePlanWeight, proPlanWeight float64) *codexUsageCombinedRecovery {
+	if len(current) == 0 {
+		return nil
+	}
+	contributions := make([]codexCombinedRecoveryContribution, 0, len(current))
+	for _, status := range current {
+		if codexIsAuthFailureStatus(status) {
+			continue
+		}
+		planType := strings.TrimSpace(status.PlanType)
+		if planType == "" && status.Usage != nil {
+			planType = strings.TrimSpace(status.Usage.PlanType)
+		}
+		weight := codexPlanWeight(planType, freePlanWeight, proPlanWeight)
+		if weight <= 0 {
+			continue
+		}
+		normalized := codexEffectiveMainRateLimit(status)
+		var fiveWindow *codexUsageWindow
+		var weekWindow *codexUsageWindow
+		if normalized != nil {
+			fiveWindow = normalized.PrimaryWindow
+			weekWindow = normalized.SecondaryWindow
+		}
+		if fiveWindow == nil && weekWindow != nil && strings.EqualFold(strings.TrimSpace(planType), "free") {
+			fiveWindow = weekWindow
+		}
+		weekAvailable, weekLocked := codexSplitRecoveryUnits(weight, weekWindow)
+		weekResetAt, _ := codexWindowResetAt(weekWindow, now)
+		fiveBlockedNow := codexRecoveryWindowBlocked(fiveWindow)
+		fiveResetAt, _ := codexWindowResetAt(fiveWindow, now)
+		contributions = append(contributions, codexCombinedRecoveryContribution{
+			weight:         weight,
+			weekAvailable:  weekAvailable,
+			weekLocked:     weekLocked,
+			weekResetAt:    weekResetAt,
+			fiveBlockedNow: fiveBlockedNow,
+			fiveResetAt:    fiveResetAt,
+		})
+	}
+	if len(contributions) == 0 {
+		return nil
+	}
+
+	totalUnits := 0.0
+	availableNow := 0.0
+	fiveBlockedUnitsNow := 0.0
+	fiveHourNextResetAt := int64(0)
+	releaseByReset := make(map[int64]float64)
+
+	for _, item := range contributions {
+		totalUnits += item.weight
+		if !item.fiveBlockedNow {
+			availableNow += item.weekAvailable
+			if item.weekLocked > 0 && item.weekResetAt > 0 {
+				releaseByReset[item.weekResetAt] += item.weekLocked
+			}
+			continue
+		}
+
+		fiveBlockedUnitsNow += item.weekAvailable
+		if item.weekAvailable > 0 && item.fiveResetAt > 0 && (fiveHourNextResetAt == 0 || item.fiveResetAt < fiveHourNextResetAt) {
+			fiveHourNextResetAt = item.fiveResetAt
+		}
+		if item.fiveResetAt == 0 {
+			continue
+		}
+
+		deltaAtUnblock := item.weekAvailable
+		weekLocked := item.weekLocked
+		if weekLocked > 0 && item.weekResetAt > 0 && item.weekResetAt <= item.fiveResetAt {
+			deltaAtUnblock += weekLocked
+			weekLocked = 0
+		}
+		if deltaAtUnblock > 0 {
+			releaseByReset[item.fiveResetAt] += deltaAtUnblock
+		}
+		if weekLocked > 0 && item.weekResetAt > item.fiveResetAt {
+			releaseByReset[item.weekResetAt] += weekLocked
+		}
+	}
+
+	if totalUnits <= 0 {
+		return nil
+	}
+
+	combined := &codexUsageCombinedRecovery{
+		TotalUnits:                roundFloat(totalUnits, 2),
+		AvailableUnitsNow:         roundFloat(availableNow, 2),
+		AvailablePercentNow:       roundFloat((availableNow/totalUnits)*100, 2),
+		FiveHourBlockedUnitsNow:   roundFloat(fiveBlockedUnitsNow, 2),
+		FiveHourBlockedPercentNow: roundFloat((fiveBlockedUnitsNow/totalUnits)*100, 2),
+		FullAvailableUnits:        roundFloat(availableNow, 2),
+		FullAvailablePercent:      roundFloat((availableNow/totalUnits)*100, 2),
+	}
+	if fiveHourNextResetAt > 0 {
+		combined.FiveHourNextResetAt = fiveHourNextResetAt
+		combined.FiveHourNextWaitSeconds = maxInt(0, int(fiveHourNextResetAt-now.Unix()))
+	}
+	if len(releaseByReset) == 0 {
+		return combined
+	}
+
+	resetAts := make([]int64, 0, len(releaseByReset))
+	for resetAt := range releaseByReset {
+		resetAts = append(resetAts, resetAt)
+	}
+	sort.Slice(resetAts, func(i, j int) bool { return resetAts[i] < resetAts[j] })
+
+	events := make([]codexUsageRecoveryEvent, 0, len(resetAts))
+	cumulative := 0.0
+	maxFutureRelease := 0.0
+	for idx, resetAt := range resetAts {
+		release := releaseByReset[resetAt]
+		if release <= 0 {
+			continue
+		}
+		cumulative += release
+		if cumulative > maxFutureRelease {
+			maxFutureRelease = cumulative
+		}
+		wait := maxInt(0, int(resetAt-now.Unix()))
+		availableUnits := availableNow + cumulative
+		event := codexUsageRecoveryEvent{
+			ResetAt:                  resetAt,
+			WaitSeconds:              wait,
+			ReleaseUnits:             roundFloat(release, 2),
+			CumulativeReleaseUnits:   roundFloat(cumulative, 2),
+			CumulativeReleasePercent: roundFloat((cumulative/totalUnits)*100, 2),
+			AvailableUnits:           roundFloat(availableUnits, 2),
+			AvailablePercent:         roundFloat((availableUnits/totalUnits)*100, 2),
+		}
+		events = append(events, event)
+		if idx == 0 {
+			combined.NextWaitSeconds = wait
+			combined.NextResetAt = resetAt
+			combined.NextAvailableUnits = roundFloat(availableUnits, 2)
+			combined.NextAvailablePercent = roundFloat((availableUnits/totalUnits)*100, 2)
+		}
+		combined.FullWaitSeconds = wait
+		combined.FullResetAt = resetAt
+		combined.FullAvailableUnits = roundFloat(availableUnits, 2)
+		combined.FullAvailablePercent = roundFloat((availableUnits/totalUnits)*100, 2)
+	}
+	combined.Events = events
+
+	significantDelta := math.Min(maxFutureRelease, math.Max(1.0, totalUnits*0.10))
+	combined.SignificantDeltaUnits = roundFloat(significantDelta, 2)
+	if significantDelta <= 0 {
+		return combined
+	}
+	for _, event := range events {
+		if event.CumulativeReleaseUnits+1e-9 < significantDelta {
+			continue
+		}
+		combined.SignificantWaitSeconds = event.WaitSeconds
+		combined.SignificantResetAt = event.ResetAt
+		combined.SignificantAvailableUnits = event.AvailableUnits
+		combined.SignificantAvailablePercent = event.AvailablePercent
+		break
+	}
+	if combined.SignificantResetAt == 0 {
+		combined.SignificantWaitSeconds = combined.FullWaitSeconds
+		combined.SignificantResetAt = combined.FullResetAt
+		combined.SignificantAvailableUnits = combined.FullAvailableUnits
+		combined.SignificantAvailablePercent = combined.FullAvailablePercent
+	}
+	return combined
+}
+
+func codexSplitRecoveryUnits(weight float64, window *codexUsageWindow) (available float64, locked float64) {
+	if weight <= 0 {
+		return 0, 0
+	}
+	if window == nil {
+		return weight, 0
+	}
+	usedPercent := clampRecoveryPercent(float64(window.UsedPercent))
+	locked = weight * usedPercent / 100.0
+	available = math.Max(weight-locked, 0)
+	return available, locked
+}
+
+func codexRecoveryWindowBlocked(window *codexUsageWindow) bool {
+	if window == nil {
+		return false
+	}
+	return clampRecoveryPercent(float64(window.UsedPercent)) >= 100
+}
+
+func clampRecoveryPercent(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func codexWindowResetAt(window *codexUsageWindow, now time.Time) (int64, bool) {
@@ -1877,6 +2247,7 @@ func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtension
 				FileName:     strings.TrimSpace(item.FileName),
 				Account:      strings.TrimSpace(item.Account),
 				PlanType:     strings.TrimSpace(item.PlanType),
+				Priority:     item.Priority,
 				Status:       strings.TrimSpace(item.Status),
 				Error:        strings.TrimSpace(item.Error),
 				ErrorSummary: strings.TrimSpace(item.ErrorSummary),
@@ -1896,7 +2267,20 @@ func cloneCodexUsageRecovery(input *codexUsageRecovery) *codexUsageRecovery {
 	return &codexUsageRecovery{
 		FiveHour: cloneCodexUsageRecoveryWindow(input.FiveHour),
 		Week:     cloneCodexUsageRecoveryWindow(input.Week),
+		Combined: cloneCodexUsageCombinedRecovery(input.Combined),
 	}
+}
+
+func cloneCodexUsageCombinedRecovery(input *codexUsageCombinedRecovery) *codexUsageCombinedRecovery {
+	if input == nil {
+		return nil
+	}
+	out := *input
+	if len(input.Events) > 0 {
+		out.Events = make([]codexUsageRecoveryEvent, len(input.Events))
+		copy(out.Events, input.Events)
+	}
+	return &out
 }
 
 func cloneCodexUsageRecoveryWindow(input *codexUsageRecoveryWindow) *codexUsageRecoveryWindow {
@@ -2056,7 +2440,7 @@ func (h *Handler) codexUsageSnapshot() (codexUsagePayload, codexUsageSummaryResp
 			break
 		}
 	}
-	liveExtensions := buildCodexUsageExtensions(state.codexUsageByAuth, time.Now().UTC(), h.codexFreePlanWeight(), h.codexProPlanWeight())
+	liveExtensions := buildCodexUsageExtensions(state.codexUsageByAuth, time.Now().UTC(), h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup())
 	compat.Extensions = cloneCodexUsageExtensions(liveExtensions)
 	summary.CompatPayload.Extensions = cloneCodexUsageExtensions(liveExtensions)
 	ensureCodexTotalUsageMultiplier(&compat, h.codexFreePlanWeight(), h.codexProPlanWeight())

@@ -2,8 +2,11 @@ package management
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -359,9 +362,22 @@ func hydrateCodexAuthUsageStatuses(current map[string]codexAuthUsageStatus, code
 			status = codexAuthUsageStatus{AuthID: authID}
 			changed = true
 		}
-		current[authID] = applyCodexAuthUsageIdentity(status, auth)
+		normalized := applyCodexAuthUsageIdentity(status, auth)
+		if !codexAuthUsageIdentityEqual(status, normalized) {
+			changed = true
+		}
+		current[authID] = normalized
 	}
 	return changed
+}
+
+func codexAuthUsageIdentityEqual(left, right codexAuthUsageStatus) bool {
+	return strings.TrimSpace(left.AuthID) == strings.TrimSpace(right.AuthID) &&
+		strings.TrimSpace(left.FileName) == strings.TrimSpace(right.FileName) &&
+		strings.TrimSpace(left.Email) == strings.TrimSpace(right.Email) &&
+		strings.TrimSpace(left.PlanType) == strings.TrimSpace(right.PlanType) &&
+		left.Priority == right.Priority &&
+		strings.TrimSpace(left.AccountID) == strings.TrimSpace(right.AccountID)
 }
 
 func applyCodexAuthUsageIdentity(status codexAuthUsageStatus, auth *coreauth.Auth) codexAuthUsageStatus {
@@ -371,11 +387,69 @@ func applyCodexAuthUsageIdentity(status codexAuthUsageStatus, auth *coreauth.Aut
 	authID := strings.TrimSpace(auth.ID)
 	status.AuthID = authID
 	status.FileName = strings.TrimSpace(auth.FileName)
+	if status.FileName == "" && strings.HasSuffix(strings.ToLower(authID), ".json") {
+		status.FileName = authID
+	}
 	status.Email = authEmail(auth)
 	status.PlanType = inferCodexPlanType(auth, status)
+	status.Priority = codexAuthPriority(auth)
 	status.AccountID = extractCodexAccountID(auth)
 	if status.Status == "" {
 		status.Status = "skipped"
 	}
 	return status
+}
+
+func codexAuthPriority(auth *coreauth.Auth) int {
+	if auth == nil {
+		return 0
+	}
+	if raw := strings.TrimSpace(auth.Attributes["priority"]); raw != "" {
+		if priority, err := strconv.Atoi(raw); err == nil {
+			return priority
+		}
+	}
+	if auth.Metadata != nil {
+		if priority, ok := codexAuthPriorityValue(auth.Metadata["priority"]); ok {
+			return priority
+		}
+	}
+	path := strings.TrimSpace(auth.Attributes["path"])
+	if path == "" {
+		path = strings.TrimSpace(auth.FileName)
+	}
+	if path == "" {
+		return 0
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(content, &metadata); err != nil {
+		return 0
+	}
+	if priority, ok := codexAuthPriorityValue(metadata["priority"]); ok {
+		return priority
+	}
+	return 0
+}
+
+func codexAuthPriorityValue(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		priority, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return priority, true
+		}
+	}
+	return 0, false
 }

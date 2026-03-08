@@ -42,6 +42,119 @@ func TestCodexUsagePollIntervalMatchesCodexCLI(t *testing.T) {
 	}
 }
 
+func TestHydrateCodexAuthUsageStatuses_MarksChangedWhenPriorityDiffers(t *testing.T) {
+	current := map[string]codexAuthUsageStatus{
+		"auth-1": {AuthID: "auth-1", Priority: 0},
+	}
+	auths := map[string]*coreauth.Auth{
+		"auth-1": {ID: "auth-1", FileName: "codex-auth-1.json", Attributes: map[string]string{"priority": "2"}},
+	}
+	changed := hydrateCodexAuthUsageStatuses(current, auths)
+	if !changed {
+		t.Fatal("expected hydrate to report changed when priority differs")
+	}
+	if got := current["auth-1"].Priority; got != 2 {
+		t.Fatalf("expected priority 2 after hydrate, got %d", got)
+	}
+}
+
+func TestBuildCodexUsageExtensions_PopulatesPriorityFromAuthFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "codex-auth.json")
+	if err := os.WriteFile(file, []byte(`{"priority":5}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"codex-auth.json": {
+			AuthID:       "codex-auth.json",
+			FileName:     "codex-auth.json",
+			PlanType:     "team",
+			Status:       "ok",
+			Priority:     0,
+			LastPolledAt: time.Now().UTC(),
+		},
+	}, time.Now().UTC(), 0.2, 6.0, dir, nil)
+	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
+		t.Fatal("expected one active auth file extension item")
+	}
+	if got := exts.ActiveAuthFiles[0].Priority; got != 5 {
+		t.Fatalf("expected extension priority 5, got %d", got)
+	}
+}
+
+func TestCloneCodexUsageExtensions_CopiesPriority(t *testing.T) {
+	input := &codexUsageExtensions{
+		ActiveAuthFiles: []codexUsageAuthFileExtensionItem{{
+			AuthID:   "auth-1",
+			FileName: "auth-1.json",
+			Account:  "priority@example.com",
+			PlanType: "team",
+			Priority: 9,
+			Status:   "ok",
+		}},
+	}
+	cloned := cloneCodexUsageExtensions(input)
+	if cloned == nil || len(cloned.ActiveAuthFiles) != 1 {
+		t.Fatal("expected one cloned auth file extension item")
+	}
+	if got := cloned.ActiveAuthFiles[0].Priority; got != 9 {
+		t.Fatalf("expected cloned priority 9, got %d", got)
+	}
+}
+
+func TestBuildCodexUsageExtensions_PopulatesPriorityFromAuthLookup(t *testing.T) {
+	auth := &coreauth.Auth{
+		ID:       "codex-auth.json",
+		FileName: "codex-auth.json",
+		Metadata: map[string]any{"priority": 7},
+	}
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"codex-auth.json": {
+			AuthID:       "codex-auth.json",
+			FileName:     "codex-auth.json",
+			PlanType:     "team",
+			Status:       "ok",
+			Priority:     0,
+			LastPolledAt: time.Now().UTC(),
+		},
+	}, time.Now().UTC(), 0.2, 6.0, "", map[string]*coreauth.Auth{"codex-auth.json": auth})
+	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
+		t.Fatal("expected one active auth file extension item")
+	}
+	if got := exts.ActiveAuthFiles[0].Priority; got != 7 {
+		t.Fatalf("expected extension priority 7 from auth lookup, got %d", got)
+	}
+}
+
+func TestApplyCodexAuthUsageIdentity_PopulatesPriorityFromFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "codex-auth.json")
+	if err := os.WriteFile(file, []byte(`{"priority":5}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	auth := &coreauth.Auth{ID: "auth-3", FileName: file, Attributes: map[string]string{"path": file}}
+	status := applyCodexAuthUsageIdentity(codexAuthUsageStatus{}, auth)
+	if status.Priority != 5 {
+		t.Fatalf("expected priority 5 from file, got %d", status.Priority)
+	}
+}
+
+func TestApplyCodexAuthUsageIdentity_PopulatesPriorityFromMetadata(t *testing.T) {
+	auth := &coreauth.Auth{ID: "auth-2", FileName: "codex-auth-2.json", Metadata: map[string]any{"priority": float64(3)}}
+	status := applyCodexAuthUsageIdentity(codexAuthUsageStatus{}, auth)
+	if status.Priority != 3 {
+		t.Fatalf("expected priority 3 from metadata, got %d", status.Priority)
+	}
+}
+
+func TestApplyCodexAuthUsageIdentity_PopulatesPriority(t *testing.T) {
+	auth := &coreauth.Auth{ID: "auth-1", FileName: "codex-auth-1.json", Attributes: map[string]string{"priority": "7"}}
+	status := applyCodexAuthUsageIdentity(codexAuthUsageStatus{}, auth)
+	if status.Priority != 7 {
+		t.Fatalf("expected priority 7, got %d", status.Priority)
+	}
+}
+
 func TestCodexPlanWeight_FreeIsPointTwo(t *testing.T) {
 	if got := codexPlanWeight("free", 0.2, 6.0); got != 0.2 {
 		t.Fatalf("expected free plan weight 0.2, got %v", got)
@@ -1470,5 +1583,169 @@ func TestRefreshCodexUsageCandidates_PrunesRemovedAuthFromCache(t *testing.T) {
 	_, summary, _ := h.codexUsageSnapshot()
 	if summary.AuthFilesTotal != 1 {
 		t.Fatalf("expected auth_files_total=1 after pruning stale auth, got %d", summary.AuthFilesTotal)
+	}
+}
+
+func TestBuildCodexUsageRecovery_CombinedTracksSignificantRecovery(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	recovery := buildCodexUsageRecovery(map[string]codexAuthUsageStatus{
+		"team-active": {
+			PlanType: "team",
+			Status:   "ok",
+			Usage: &codexUsagePayload{
+				PlanType: "team",
+				RateLimit: &codexUsageRateLimit{
+					PrimaryWindow:   &codexUsageWindow{UsedPercent: 20, LimitWindowSeconds: 18000, ResetAt: now.Add(2 * time.Hour).Unix()},
+					SecondaryWindow: &codexUsageWindow{UsedPercent: 40, LimitWindowSeconds: 604800, ResetAt: now.Add(4 * 24 * time.Hour).Unix()},
+				},
+			},
+		},
+		"team-week-exhausted": {
+			PlanType: "team",
+			Status:   "ok",
+			Usage: &codexUsagePayload{
+				PlanType: "team",
+				RateLimit: &codexUsageRateLimit{
+					PrimaryWindow:   &codexUsageWindow{UsedPercent: 100, LimitWindowSeconds: 18000, ResetAt: now.Add(1 * time.Hour).Unix()},
+					SecondaryWindow: &codexUsageWindow{UsedPercent: 100, LimitWindowSeconds: 604800, ResetAt: now.Add(48 * time.Hour).Unix()},
+				},
+			},
+		},
+		"free-five-blocked": {
+			PlanType: "free",
+			Status:   "ok",
+			Usage: &codexUsagePayload{
+				PlanType: "free",
+				RateLimit: &codexUsageRateLimit{
+					PrimaryWindow:   &codexUsageWindow{UsedPercent: 100, LimitWindowSeconds: 18000, ResetAt: now.Add(30 * time.Minute).Unix()},
+					SecondaryWindow: &codexUsageWindow{UsedPercent: 50, LimitWindowSeconds: 604800, ResetAt: now.Add(72 * time.Hour).Unix()},
+				},
+			},
+		},
+		"hard-failed": {
+			PlanType: "team",
+			Status:   "error",
+			Error:    "usage request failed: status=401 body={\"error\":{\"code\":\"token_invalidated\"}}",
+			Usage: &codexUsagePayload{
+				PlanType: "team",
+				RateLimit: &codexUsageRateLimit{
+					PrimaryWindow:   &codexUsageWindow{UsedPercent: 0, LimitWindowSeconds: 18000},
+					SecondaryWindow: &codexUsageWindow{UsedPercent: 0, LimitWindowSeconds: 604800},
+				},
+			},
+		},
+	}, now, 0.2, 6.0)
+
+	if recovery == nil || recovery.Combined == nil {
+		t.Fatal("expected combined recovery summary")
+	}
+	combined := recovery.Combined
+	if math.Abs(combined.TotalUnits-2.2) > 1e-9 {
+		t.Fatalf("expected total_units=2.2 without hard failures, got %v", combined.TotalUnits)
+	}
+	if math.Abs(combined.AvailableUnitsNow-0.6) > 1e-9 {
+		t.Fatalf("expected available_now=0.6, got %v", combined.AvailableUnitsNow)
+	}
+	if math.Abs(combined.FiveHourBlockedUnitsNow-0.1) > 1e-9 {
+		t.Fatalf("expected five_hour_blocked_units_now=0.1, got %v", combined.FiveHourBlockedUnitsNow)
+	}
+	if combined.FiveHourNextWaitSeconds != 1800 {
+		t.Fatalf("expected five_hour_next_wait_seconds=1800, got %d", combined.FiveHourNextWaitSeconds)
+	}
+	if combined.NextWaitSeconds != 1800 {
+		t.Fatalf("expected next_wait_seconds=1800, got %d", combined.NextWaitSeconds)
+	}
+	if math.Abs(combined.NextAvailableUnits-0.7) > 1e-9 {
+		t.Fatalf("expected next_available_units=0.7, got %v", combined.NextAvailableUnits)
+	}
+	if math.Abs(combined.SignificantDeltaUnits-1.0) > 1e-9 {
+		t.Fatalf("expected significant_delta_units=1.0, got %v", combined.SignificantDeltaUnits)
+	}
+	if combined.SignificantWaitSeconds != 48*3600 {
+		t.Fatalf("expected significant_wait_seconds=172800, got %d", combined.SignificantWaitSeconds)
+	}
+	if math.Abs(combined.SignificantAvailableUnits-1.7) > 1e-9 {
+		t.Fatalf("expected significant_available_units=1.7, got %v", combined.SignificantAvailableUnits)
+	}
+	if combined.FullWaitSeconds != 96*3600 {
+		t.Fatalf("expected full_wait_seconds=345600, got %d", combined.FullWaitSeconds)
+	}
+	if math.Abs(combined.FullAvailableUnits-2.2) > 1e-9 {
+		t.Fatalf("expected full_available_units=2.2, got %v", combined.FullAvailableUnits)
+	}
+	if len(combined.Events) != 4 {
+		t.Fatalf("expected 4 combined recovery events, got %d", len(combined.Events))
+	}
+	if math.Abs(combined.Events[0].AvailableUnits-0.7) > 1e-9 {
+		t.Fatalf("expected first event available_units=0.7, got %v", combined.Events[0].AvailableUnits)
+	}
+}
+
+func TestGetCodexUsageCompat_IncludesCombinedRecoveryExtension(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now().UTC()
+	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
+		codexUsageByAuth: map[string]codexAuthUsageStatus{
+			"ok-auth": {
+				AuthID:        "ok-auth",
+				Email:         "ok@example.com",
+				PlanType:      "team",
+				Status:        "ok",
+				HasUsage:      true,
+				LastSuccessAt: &now,
+				Usage: &codexUsagePayload{
+					PlanType: "team",
+					RateLimit: &codexUsageRateLimit{
+						PrimaryWindow:   &codexUsageWindow{UsedPercent: 100, LimitWindowSeconds: 18000, ResetAt: now.Add(15 * time.Minute).Unix()},
+						SecondaryWindow: &codexUsageWindow{UsedPercent: 25, LimitWindowSeconds: 604800, ResetAt: now.Add(7 * 24 * time.Hour).Unix()},
+					},
+				},
+			},
+			"hard-auth": {
+				AuthID:   "hard-auth",
+				Email:    "hard@example.com",
+				PlanType: "team",
+				Status:   "error",
+				Error:    "usage request failed: status=401 body={\"error\":{\"code\":\"token_invalidated\"}}",
+			},
+		},
+		codexUsageCompat: codexUsagePayload{
+			PlanType: "team",
+			RateLimit: &codexUsageRateLimit{
+				PrimaryWindow:   &codexUsageWindow{UsedPercent: 100, LimitWindowSeconds: 18000},
+				SecondaryWindow: &codexUsageWindow{UsedPercent: 25, LimitWindowSeconds: 604800},
+			},
+		},
+		codexUsageSummary: codexUsageSummaryResponse{AuthFiles: []codexAuthUsageStatus{{AuthID: "ok-auth"}, {AuthID: "hard-auth"}}},
+		codexUsageHasData: true,
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/codex/usage", nil)
+	h.GetCodexUsageCompat(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var payload codexUsagePayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Extensions == nil || payload.Extensions.Recovery == nil || payload.Extensions.Recovery.Combined == nil {
+		t.Fatal("expected combined recovery extension in compat payload")
+	}
+	combined := payload.Extensions.Recovery.Combined
+	if math.Abs(combined.TotalUnits-1.0) > 1e-9 {
+		t.Fatalf("expected hard auth excluded from combined total, got %v", combined.TotalUnits)
+	}
+	if combined.NextWaitSeconds <= 0 {
+		t.Fatalf("expected positive next_wait_seconds, got %d", combined.NextWaitSeconds)
+	}
+	if math.Abs(combined.AvailableUnitsNow-0.0) > 1e-9 {
+		t.Fatalf("expected five-hour gate to block current available units, got %v", combined.AvailableUnitsNow)
+	}
+	if math.Abs(combined.FiveHourBlockedUnitsNow-0.75) > 1e-9 {
+		t.Fatalf("expected blocked weekly availability 0.75, got %v", combined.FiveHourBlockedUnitsNow)
 	}
 }
