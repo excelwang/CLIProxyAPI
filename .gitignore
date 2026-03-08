@@ -49,3 +49,6 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
+
+# local deploy helpers
+scripts/deploy-*.sh
