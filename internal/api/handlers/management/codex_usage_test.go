@@ -189,7 +189,7 @@ func TestCodexEffectiveMainRateLimit_WeeklyExhaustedForcesBothWindowsDepleted(t 
 		},
 	}
 
-	got := codexEffectiveMainRateLimit(status)
+	got := codexEffectiveMainRateLimit(time.Now().UTC(), status)
 	if got == nil || got.PrimaryWindow == nil || got.SecondaryWindow == nil {
 		t.Fatalf("expected both windows, got %+v", got)
 	}
@@ -204,7 +204,7 @@ func TestCodexEffectiveMainRateLimit_AuthFailureForcesBothWindowsDepleted(t *tes
 		Error:  "usage request failed: status=401 body={\"error\":{\"code\":\"token_invalidated\"}}",
 	}
 
-	got := codexEffectiveMainRateLimit(status)
+	got := codexEffectiveMainRateLimit(time.Now().UTC(), status)
 	if got == nil || got.PrimaryWindow == nil || got.SecondaryWindow == nil {
 		t.Fatalf("expected both windows for auth failure, got %+v", got)
 	}
@@ -232,12 +232,158 @@ func TestCodexEffectiveMainRateLimit_NonAuthErrorKeepsCachedUsage(t *testing.T) 
 		},
 	}
 
-	got := codexEffectiveMainRateLimit(status)
+	got := codexEffectiveMainRateLimit(time.Now().UTC(), status)
 	if got == nil || got.PrimaryWindow == nil || got.SecondaryWindow == nil {
 		t.Fatalf("expected cached windows for non-auth error, got %+v", got)
 	}
 	if got.PrimaryWindow.UsedPercent != 20 || got.SecondaryWindow.UsedPercent != 90 {
 		t.Fatalf("expected cached used_percent primary=20 secondary=90, got primary=%d secondary=%d", got.PrimaryWindow.UsedPercent, got.SecondaryWindow.UsedPercent)
+	}
+}
+
+func TestCodexEffectiveMainRateLimit_ResetDueRestoresFullQuota(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	status := codexAuthUsageStatus{
+		Status: "ok",
+		Usage: &codexUsagePayload{
+			PlanType: "team",
+			RateLimit: &codexUsageRateLimit{
+				Allowed:      false,
+				LimitReached: true,
+				PrimaryWindow: &codexUsageWindow{
+					UsedPercent:        100,
+					LimitWindowSeconds: codexFiveHourWindowSecs,
+					ResetAfterSeconds:  0,
+					ResetAt:            now.Unix() - 5,
+				},
+				SecondaryWindow: &codexUsageWindow{
+					UsedPercent:        100,
+					LimitWindowSeconds: codexWeeklyWindowSecs,
+					ResetAfterSeconds:  0,
+					ResetAt:            now.Unix() - 1,
+				},
+			},
+		},
+	}
+
+	got := codexEffectiveMainRateLimit(now, status)
+	if got == nil || got.PrimaryWindow == nil || got.SecondaryWindow == nil {
+		t.Fatalf("expected recovered windows, got %+v", got)
+	}
+	if got.PrimaryWindow.UsedPercent != 0 || got.SecondaryWindow.UsedPercent != 0 {
+		t.Fatalf("expected both windows used_percent=0 after reset, got primary=%d secondary=%d", got.PrimaryWindow.UsedPercent, got.SecondaryWindow.UsedPercent)
+	}
+	if !got.Allowed || got.LimitReached {
+		t.Fatalf("expected allowed=true limit_reached=false after reset, got allowed=%v limit_reached=%v", got.Allowed, got.LimitReached)
+	}
+}
+
+func TestBuildCodexUsageExtensions_ResetDueShowsRecoveredWindow(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"auth-1": {
+			AuthID:   "auth-1",
+			FileName: "codex-auth-1.json",
+			PlanType: "team",
+			Status:   "ok",
+			Usage: &codexUsagePayload{
+				RateLimit: &codexUsageRateLimit{
+					Allowed:      false,
+					LimitReached: true,
+					PrimaryWindow: &codexUsageWindow{
+						UsedPercent:        100,
+						LimitWindowSeconds: codexFiveHourWindowSecs,
+						ResetAt:            now.Unix() - 10,
+					},
+					SecondaryWindow: &codexUsageWindow{
+						UsedPercent:        100,
+						LimitWindowSeconds: codexWeeklyWindowSecs,
+						ResetAt:            now.Unix() - 10,
+					},
+				},
+			},
+		},
+	}, now, 0.2, 6.0, "", nil)
+	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
+		t.Fatal("expected one active auth file extension item")
+	}
+	item := exts.ActiveAuthFiles[0]
+	if item.FiveHour == nil || item.Week == nil {
+		t.Fatalf("expected both windows on active auth item, got %+v", item)
+	}
+	if item.FiveHour.UsedPercent != 0 || item.Week.UsedPercent != 0 {
+		t.Fatalf("expected auth file item windows to recover to full quota, got five_hour=%d week=%d", item.FiveHour.UsedPercent, item.Week.UsedPercent)
+	}
+}
+
+func TestCodexEffectiveMainRateLimit_PartialRecoveryKeepsFiveHourBlocked(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	status := codexAuthUsageStatus{
+		Status: "ok",
+		Usage: &codexUsagePayload{
+			PlanType: "team",
+			RateLimit: &codexUsageRateLimit{
+				Allowed:      false,
+				LimitReached: true,
+				PrimaryWindow: &codexUsageWindow{
+					UsedPercent:        100,
+					LimitWindowSeconds: codexFiveHourWindowSecs,
+					ResetAt:            now.Unix() + 1800,
+				},
+				SecondaryWindow: &codexUsageWindow{
+					UsedPercent:        100,
+					LimitWindowSeconds: codexWeeklyWindowSecs,
+					ResetAt:            now.Unix() - 10,
+				},
+			},
+		},
+	}
+
+	got := codexEffectiveMainRateLimit(now, status)
+	if got == nil || got.PrimaryWindow == nil || got.SecondaryWindow == nil {
+		t.Fatalf("expected both windows, got %+v", got)
+	}
+	if got.PrimaryWindow.UsedPercent != 100 || got.SecondaryWindow.UsedPercent != 0 {
+		t.Fatalf("expected 5h blocked and week recovered, got primary=%d secondary=%d", got.PrimaryWindow.UsedPercent, got.SecondaryWindow.UsedPercent)
+	}
+	if got.Allowed || !got.LimitReached {
+		t.Fatalf("expected allowed=false limit_reached=true while 5h remains blocked, got allowed=%v limit_reached=%v", got.Allowed, got.LimitReached)
+	}
+}
+
+func TestCodexEffectiveMainRateLimit_WeeklyDepletedAlignsForcedResetTime(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	status := codexAuthUsageStatus{
+		Status: "ok",
+		Usage: &codexUsagePayload{
+			PlanType: "team",
+			RateLimit: &codexUsageRateLimit{
+				Allowed:      false,
+				LimitReached: true,
+				PrimaryWindow: &codexUsageWindow{
+					UsedPercent:        100,
+					LimitWindowSeconds: codexFiveHourWindowSecs,
+					ResetAt:            now.Unix() - 60,
+				},
+				SecondaryWindow: &codexUsageWindow{
+					UsedPercent:        100,
+					LimitWindowSeconds: codexWeeklyWindowSecs,
+					ResetAfterSeconds:  3600,
+					ResetAt:            now.Unix() + 3600,
+				},
+			},
+		},
+	}
+
+	got := codexEffectiveMainRateLimit(now, status)
+	if got == nil || got.PrimaryWindow == nil || got.SecondaryWindow == nil {
+		t.Fatalf("expected both windows, got %+v", got)
+	}
+	if got.PrimaryWindow.ResetAt != status.Usage.RateLimit.SecondaryWindow.ResetAt || got.SecondaryWindow.ResetAt != status.Usage.RateLimit.SecondaryWindow.ResetAt {
+		t.Fatalf("expected forced depleted windows to align with weekly reset_at, got primary=%d secondary=%d week=%d", got.PrimaryWindow.ResetAt, got.SecondaryWindow.ResetAt, status.Usage.RateLimit.SecondaryWindow.ResetAt)
+	}
+	if got.PrimaryWindow.ResetAfterSeconds != status.Usage.RateLimit.SecondaryWindow.ResetAfterSeconds || got.SecondaryWindow.ResetAfterSeconds != status.Usage.RateLimit.SecondaryWindow.ResetAfterSeconds {
+		t.Fatalf("expected forced depleted windows to align with weekly reset_after_seconds, got primary=%d secondary=%d week=%d", got.PrimaryWindow.ResetAfterSeconds, got.SecondaryWindow.ResetAfterSeconds, status.Usage.RateLimit.SecondaryWindow.ResetAfterSeconds)
 	}
 }
 

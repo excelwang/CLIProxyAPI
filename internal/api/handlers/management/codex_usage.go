@@ -636,7 +636,7 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 	}
 	items := make([]codexUsageAuthFileExtensionItem, 0, len(current))
 	for _, status := range current {
-		normalized := codexEffectiveMainRateLimit(status)
+		normalized := codexEffectiveMainRateLimit(now, status)
 
 		account := strings.TrimSpace(status.Email)
 		if account == "" && status.Usage != nil {
@@ -822,15 +822,73 @@ func codexUsageErrorSummary(raw string) string {
 	return text[:maxLen] + "..."
 }
 
-func codexEffectiveMainRateLimit(status codexAuthUsageStatus) *codexUsageRateLimit {
+func codexEffectiveMainRateLimit(now time.Time, status codexAuthUsageStatus) *codexUsageRateLimit {
 	var normalized *codexUsageRateLimit
 	if status.Usage != nil {
 		normalized = normalizeCodexMainRateLimitWindows(status.Usage.RateLimit)
 	}
+	normalized = codexRefreshRateLimitForNow(now, normalized)
 	if codexIsAuthFailureStatus(status) || codexIsWeeklyExhaustedRateLimit(normalized) {
 		return codexForceDepletedRateLimit(normalized)
 	}
 	return normalized
+}
+
+func codexRefreshRateLimitForNow(now time.Time, rate *codexUsageRateLimit) *codexUsageRateLimit {
+	if rate == nil {
+		return nil
+	}
+	out := *rate
+	primary, primaryRecovered := codexRefreshWindowForNow(now, rate.PrimaryWindow)
+	secondary, secondaryRecovered := codexRefreshWindowForNow(now, rate.SecondaryWindow)
+	out.PrimaryWindow = primary
+	out.SecondaryWindow = secondary
+	if primaryRecovered || secondaryRecovered {
+		if codexAnyBlockedWindow(&out) {
+			out.Allowed = false
+			out.LimitReached = true
+		} else {
+			out.Allowed = true
+			out.LimitReached = false
+		}
+	}
+	return &out
+}
+
+func codexAnyBlockedWindow(rate *codexUsageRateLimit) bool {
+	if rate == nil {
+		return false
+	}
+	if rate.PrimaryWindow != nil && clampRecoveryPercent(float64(rate.PrimaryWindow.UsedPercent)) >= 100 {
+		return true
+	}
+	if rate.SecondaryWindow != nil && clampRecoveryPercent(float64(rate.SecondaryWindow.UsedPercent)) >= 100 {
+		return true
+	}
+	return false
+}
+
+func codexRefreshWindowForNow(now time.Time, window *codexUsageWindow) (*codexUsageWindow, bool) {
+	if window == nil {
+		return nil, false
+	}
+	cloned := *window
+	if !codexWindowResetDue(now, &cloned) {
+		return &cloned, false
+	}
+	cloned.UsedPercent = 0
+	cloned.ResetAfterSeconds = 0
+	return &cloned, true
+}
+
+func codexWindowResetDue(now time.Time, window *codexUsageWindow) bool {
+	if window == nil {
+		return false
+	}
+	if window.ResetAt > 0 {
+		return window.ResetAt <= now.Unix()
+	}
+	return false
 }
 
 func codexIsWeeklyExhaustedRateLimit(rate *codexUsageRateLimit) bool {
@@ -872,12 +930,8 @@ func codexForceDepletedRateLimit(rate *codexUsageRateLimit) *codexUsageRateLimit
 	}
 	out.PrimaryWindow.UsedPercent = 100
 	if weekRef != nil {
-		if out.PrimaryWindow.ResetAfterSeconds <= 0 {
-			out.PrimaryWindow.ResetAfterSeconds = weekRef.ResetAfterSeconds
-		}
-		if out.PrimaryWindow.ResetAt <= 0 {
-			out.PrimaryWindow.ResetAt = weekRef.ResetAt
-		}
+		out.PrimaryWindow.ResetAfterSeconds = weekRef.ResetAfterSeconds
+		out.PrimaryWindow.ResetAt = weekRef.ResetAt
 	}
 
 	if out.SecondaryWindow == nil {
@@ -887,11 +941,16 @@ func codexForceDepletedRateLimit(rate *codexUsageRateLimit) *codexUsageRateLimit
 		out.SecondaryWindow.LimitWindowSeconds = codexWeeklyWindowSecs
 	}
 	out.SecondaryWindow.UsedPercent = 100
-	if out.SecondaryWindow.ResetAfterSeconds <= 0 && out.PrimaryWindow != nil {
-		out.SecondaryWindow.ResetAfterSeconds = out.PrimaryWindow.ResetAfterSeconds
-	}
-	if out.SecondaryWindow.ResetAt <= 0 && out.PrimaryWindow != nil {
-		out.SecondaryWindow.ResetAt = out.PrimaryWindow.ResetAt
+	if weekRef != nil {
+		out.SecondaryWindow.ResetAfterSeconds = weekRef.ResetAfterSeconds
+		out.SecondaryWindow.ResetAt = weekRef.ResetAt
+	} else if out.PrimaryWindow != nil {
+		if out.SecondaryWindow.ResetAfterSeconds <= 0 {
+			out.SecondaryWindow.ResetAfterSeconds = out.PrimaryWindow.ResetAfterSeconds
+		}
+		if out.SecondaryWindow.ResetAt <= 0 {
+			out.SecondaryWindow.ResetAt = out.PrimaryWindow.ResetAt
+		}
 	}
 
 	out.Allowed = false
@@ -958,7 +1017,7 @@ func buildCodexUsageRecovery(current map[string]codexAuthUsageStatus, now time.T
 			planType = strings.TrimSpace(status.Usage.PlanType)
 		}
 		weight := codexPlanWeight(planType, freePlanWeight, proPlanWeight)
-		normalized := codexEffectiveMainRateLimit(status)
+		normalized := codexEffectiveMainRateLimit(now, status)
 
 		var fiveWindow *codexUsageWindow
 		var weekWindow *codexUsageWindow
@@ -1126,7 +1185,7 @@ func buildCodexUsageCombinedRecovery(now time.Time, current map[string]codexAuth
 		if weight <= 0 {
 			continue
 		}
-		normalized := codexEffectiveMainRateLimit(status)
+		normalized := codexEffectiveMainRateLimit(now, status)
 		var fiveWindow *codexUsageWindow
 		var weekWindow *codexUsageWindow
 		if normalized != nil {
@@ -1385,7 +1444,7 @@ func aggregateCodexUsage(authStatuses map[string]codexAuthUsageStatus, freePlanW
 		}
 		weight := codexPlanWeight(plan, freePlanWeight, proPlanWeight)
 		mainRate.addDenominator(weight)
-		mainRate.add(codexEffectiveMainRateLimit(status), weight)
+		mainRate.add(codexEffectiveMainRateLimit(time.Now().UTC(), status), weight)
 
 		if status.Usage == nil {
 			continue
