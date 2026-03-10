@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	codexpluginaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/codexpluginaccess"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -85,6 +86,7 @@ func ApplyAccessProviders(manager *sdkaccess.Manager, oldCfg, newCfg *config.Con
 	}
 
 	existing := manager.Providers()
+	codexpluginaccess.Register(&newCfg.SDKConfig)
 	configaccess.Register(&newCfg.SDKConfig)
 	providers, added, updated, removed, err := ReconcileProviders(oldCfg, newCfg, existing)
 	if err != nil {

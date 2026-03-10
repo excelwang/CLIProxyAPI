@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	gin "github.com/gin-gonic/gin"
+	codexpluginaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/codexpluginaccess"
+	configaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/config_access"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -109,6 +112,44 @@ func TestAmpProviderModelRoutes(t *testing.T) {
 				t.Fatalf("response body for %s missing %q: %s", tc.path, tc.wantContains, body)
 			}
 		})
+	}
+}
+
+func TestCodexPluginAuthJSONDownloadAndUseDerivedToken(t *testing.T) {
+	server := newTestServer(t)
+	codexpluginaccess.Register(&server.cfg.SDKConfig)
+	configaccess.Register(&server.cfg.SDKConfig)
+	server.accessManager.SetProviders(sdkaccess.RegisteredProviders())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/codex/auth.json?email=plugin@example.com&plan_type=team", nil)
+	req.Header.Set("Authorization", "Bearer test-key")
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status for auth download: %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var authDoc struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &authDoc); err != nil {
+		t.Fatalf("unmarshal auth.json response: %v", err)
+	}
+	if authDoc.Tokens.AccessToken == "" {
+		t.Fatal("expected access_token in auth.json response")
+	}
+
+	modelsReq := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	modelsReq.Header.Set("Authorization", "Bearer "+authDoc.Tokens.AccessToken)
+	modelsRR := httptest.NewRecorder()
+	server.engine.ServeHTTP(modelsRR, modelsReq)
+	if modelsRR.Code != http.StatusOK {
+		t.Fatalf("unexpected status for derived token models request: %d body=%s", modelsRR.Code, modelsRR.Body.String())
+	}
+	if body := modelsRR.Body.String(); !strings.Contains(body, `"object":"list"`) {
+		t.Fatalf("unexpected models body: %s", body)
 	}
 }
 

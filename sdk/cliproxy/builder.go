@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	codexpluginaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/codexpluginaccess"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -197,6 +198,7 @@ func (b *Builder) Build() (*Service, error) {
 		accessManager = sdkaccess.NewManager()
 	}
 
+	codexpluginaccess.Register(&b.cfg.SDKConfig)
 	configaccess.Register(&b.cfg.SDKConfig)
 	accessManager.SetProviders(sdkaccess.RegisteredProviders())
 
