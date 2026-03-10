@@ -362,6 +362,13 @@ func (s *Server) setupRoutes() {
 	codexAPI.Use(AuthMiddleware(s.accessManager))
 	{
 		codexAPI.GET("/auth.json", s.downloadCodexPluginAuthJSON)
+		codexAPI.GET("/models", s.codexModels)
+	}
+
+	backendCodex := s.engine.Group("/backend-api/codex")
+	backendCodex.Use(AuthMiddleware(s.accessManager))
+	{
+		backendCodex.GET("/models", s.codexModels)
 	}
 
 	// Root endpoint
