@@ -361,6 +361,27 @@ func TestBuildCodexUsageExtensions_OmitsSelectedAuthServiceTierWhenObservedAuthD
 	}
 }
 
+func TestBuildCodexUsageExtensions_FallsBackToObservedAuthWhenSelectedAuthMissing(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"auth-1": {
+			AuthID:   "auth-1",
+			FileName: "codex-auth-1.json",
+			PlanType: "team",
+			Status:   "ok",
+		},
+	}, now, 0.2, 6.0, "", nil, "", "auth-1", "default", now)
+	if exts == nil || exts.SelectedAuth == nil {
+		t.Fatalf("expected selected auth extension from observed auth fallback, got %#v", exts)
+	}
+	if exts.SelectedAuth.AuthID != "auth-1" {
+		t.Fatalf("expected fallback auth id auth-1, got %q", exts.SelectedAuth.AuthID)
+	}
+	if exts.SelectedAuth.ServiceTier != "default" {
+		t.Fatalf("expected fallback service tier default, got %q", exts.SelectedAuth.ServiceTier)
+	}
+}
+
 func TestCodexEffectiveMainRateLimit_PartialRecoveryKeepsFiveHourBlocked(t *testing.T) {
 	now := time.Unix(1_900_000_000, 0).UTC()
 	status := codexAuthUsageStatus{

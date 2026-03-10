@@ -717,6 +717,9 @@ func buildCodexUsageSelectedAuthExtension(selectedAuthID, observedAuthID, observ
 	selectedAuthID = strings.TrimSpace(selectedAuthID)
 	observedAuthID = strings.TrimSpace(observedAuthID)
 	observedServiceTier = strings.ToLower(strings.TrimSpace(observedServiceTier))
+	if selectedAuthID == "" {
+		selectedAuthID = observedAuthID
+	}
 	if selectedAuthID == "" || observedAuthID == "" || selectedAuthID != observedAuthID {
 		return nil
 	}
