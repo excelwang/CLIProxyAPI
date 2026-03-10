@@ -3,6 +3,7 @@ package management
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type usagePersistenceState struct {
@@ -14,14 +15,17 @@ type usagePersistenceState struct {
 }
 
 type codexUsageState struct {
-	codexUsageMu        sync.RWMutex
-	codexUsagePollMu    sync.Mutex
-	codexUsageByAuth    map[string]codexAuthUsageStatus
-	codexUsageCompat    codexUsagePayload
-	codexUsageSummary   codexUsageSummaryResponse
-	codexUsageHasData   bool
-	codexUsageSelected  string
-	codexUsageAsyncPoll atomic.Bool
+	codexUsageMu                   sync.RWMutex
+	codexUsagePollMu               sync.Mutex
+	codexUsageByAuth               map[string]codexAuthUsageStatus
+	codexUsageCompat               codexUsagePayload
+	codexUsageSummary              codexUsageSummaryResponse
+	codexUsageHasData              bool
+	codexUsageSelected             string
+	codexObservedServiceTierAuthID string
+	codexObservedServiceTier       string
+	codexObservedServiceTierAt     time.Time
+	codexUsageAsyncPoll            atomic.Bool
 }
 
 type handlerUsageRuntime struct {

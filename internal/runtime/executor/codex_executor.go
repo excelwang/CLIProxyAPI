@@ -177,6 +177,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 			continue
 		}
 
+		reportObservedCodexServiceTier(ctx, auth, line)
 		if detail, ok := parseCodexUsage(line); ok {
 			reporter.publish(ctx, detail)
 		}
@@ -269,6 +270,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 		return resp, err
 	}
 	appendAPIResponseChunk(ctx, e.cfg, data)
+	reportObservedCodexServiceTier(ctx, auth, data)
 	reporter.publish(ctx, parseOpenAIUsage(data))
 	reporter.ensurePublished(ctx)
 	var param any
@@ -379,6 +381,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			if bytes.HasPrefix(line, dataTag) {
 				data := bytes.TrimSpace(line[5:])
 				if gjson.GetBytes(data, "type").String() == "response.completed" {
+					reportObservedCodexServiceTier(ctx, auth, data)
 					if detail, ok := parseCodexUsage(data); ok {
 						reporter.publish(ctx, detail)
 					}

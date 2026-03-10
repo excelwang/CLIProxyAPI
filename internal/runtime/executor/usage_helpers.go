@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apihandlers "github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 	"github.com/tidwall/gjson"
@@ -192,6 +193,26 @@ func parseCodexUsage(data []byte) (usage.Detail, bool) {
 		detail.ReasoningTokens = reasoning.Int()
 	}
 	return detail, true
+}
+
+func parseCodexServiceTier(data []byte) string {
+	parsed := gjson.ParseBytes(data)
+	serviceTier := strings.TrimSpace(parsed.Get("response.service_tier").String())
+	if serviceTier == "" {
+		serviceTier = strings.TrimSpace(parsed.Get("service_tier").String())
+	}
+	return strings.ToLower(serviceTier)
+}
+
+func reportObservedCodexServiceTier(ctx context.Context, auth *cliproxyauth.Auth, data []byte) {
+	if auth == nil {
+		return
+	}
+	authID := strings.TrimSpace(auth.ID)
+	if authID == "" {
+		return
+	}
+	apihandlers.ReportObservedServiceTier(ctx, authID, parseCodexServiceTier(data))
 }
 
 func parseOpenAIUsage(data []byte) usage.Detail {

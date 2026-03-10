@@ -24,6 +24,7 @@ func registerCodexUsageRoutes(s *api.Server) {
 
 	if base := s.APIHandlers(); base != nil {
 		base.SetSelectedAuthIDCallback(mgmt.SelectedAuthIDCallback())
+		base.SetObservedServiceTierCallback(mgmt.ObservedServiceTierCallback())
 	}
 
 	authMiddleware := s.RequestAuthMiddleware()

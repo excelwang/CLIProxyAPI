@@ -1,6 +1,12 @@
 package executor
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	apihandlers "github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+)
 
 func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":5}}}`)
@@ -39,5 +45,54 @@ func TestParseOpenAIUsageResponses(t *testing.T) {
 	}
 	if detail.ReasoningTokens != 9 {
 		t.Fatalf("reasoning tokens = %d, want %d", detail.ReasoningTokens, 9)
+	}
+}
+
+func TestParseCodexServiceTier(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "nested response",
+			data: `{"type":"response.completed","response":{"service_tier":"priority"}}`,
+			want: "priority",
+		},
+		{
+			name: "top level fallback",
+			data: `{"service_tier":"flex"}`,
+			want: "flex",
+		},
+		{
+			name: "missing",
+			data: `{"type":"response.completed"}`,
+			want: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseCodexServiceTier([]byte(tc.data)); got != tc.want {
+				t.Fatalf("parseCodexServiceTier() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReportObservedCodexServiceTier(t *testing.T) {
+	var gotAuthID string
+	var gotTier string
+	ctx := apihandlers.WithObservedServiceTierCallback(context.Background(), func(authID string, serviceTier string) {
+		gotAuthID = authID
+		gotTier = serviceTier
+	})
+
+	reportObservedCodexServiceTier(ctx, &cliproxyauth.Auth{ID: "auth-1"}, []byte(`{"type":"response.completed","response":{"service_tier":"priority"}}`))
+
+	if gotAuthID != "auth-1" {
+		t.Fatalf("authID = %q, want %q", gotAuthID, "auth-1")
+	}
+	if gotTier != "priority" {
+		t.Fatalf("serviceTier = %q, want %q", gotTier, "priority")
 	}
 }

@@ -27,9 +27,13 @@ func (h *Handler) setSelectedCodexAuthID(authID string) {
 	}
 	authID = strings.TrimSpace(authID)
 	state.codexUsageMu.Lock()
+	changed := strings.TrimSpace(state.codexUsageSelected) != authID
 	state.codexUsageSelected = authID
 	state.codexUsageSummary.SelectedAuthID = authID
 	state.codexUsageMu.Unlock()
+	if changed {
+		h.clearObservedCodexServiceTierIfAuthChanged(authID)
+	}
 }
 
 func (h *Handler) selectedCodexAuthID() string {

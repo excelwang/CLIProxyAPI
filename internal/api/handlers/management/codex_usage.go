@@ -133,6 +133,12 @@ type codexUsageCombinedRecovery struct {
 	Events                      []codexUsageRecoveryEvent `json:"events,omitempty"`
 }
 
+type codexUsageSelectedAuthExtension struct {
+	AuthID      string     `json:"auth_id,omitempty"`
+	ServiceTier string     `json:"service_tier,omitempty"`
+	ObservedAt  *time.Time `json:"observed_at,omitempty"`
+}
+
 type codexUsageRecovery struct {
 	FiveHour *codexUsageRecoveryWindow   `json:"five_hour,omitempty"`
 	Week     *codexUsageRecoveryWindow   `json:"week,omitempty"`
@@ -142,6 +148,7 @@ type codexUsageRecovery struct {
 type codexUsageExtensions struct {
 	ActiveAuthFiles []codexUsageAuthFileExtensionItem `json:"active_auth_files,omitempty"`
 	Recovery        *codexUsageRecovery               `json:"recovery,omitempty"`
+	SelectedAuth    *codexUsageSelectedAuthExtension  `json:"selected_auth,omitempty"`
 }
 
 type codexUsagePayload struct {
@@ -519,7 +526,7 @@ func (h *Handler) updateCodexUsageState(current map[string]codexAuthUsageStatus,
 	}
 	compatPayload, totalSummary, withUsage := aggregateCodexUsage(current, h.codexFreePlanWeight(), h.codexProPlanWeight())
 	fillCodexCompatAccountEmailFromSelected(&compatPayload, current, selectedAuthID)
-	compatPayload.Extensions = buildCodexUsageExtensions(current, now, h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup())
+	compatPayload.Extensions = buildCodexUsageExtensions(current, now, h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup(), "", "", "", time.Time{})
 	authErrors := 0
 	authList := make([]codexAuthUsageStatus, 0, len(current))
 	for _, item := range current {
@@ -630,7 +637,7 @@ func fillCodexCompatAccountEmailFromSelected(compat *codexUsagePayload, current 
 	}
 }
 
-func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time.Time, freePlanWeight, proPlanWeight float64, authBaseDir string, authLookup map[string]*coreauth.Auth) *codexUsageExtensions {
+func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time.Time, freePlanWeight, proPlanWeight float64, authBaseDir string, authLookup map[string]*coreauth.Auth, selectedAuthID, observedAuthID, observedServiceTier string, observedAt time.Time) *codexUsageExtensions {
 	if len(current) == 0 {
 		return nil
 	}
@@ -702,7 +709,29 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 	return &codexUsageExtensions{
 		ActiveAuthFiles: items,
 		Recovery:        buildCodexUsageRecovery(current, now, freePlanWeight, proPlanWeight),
+		SelectedAuth:    buildCodexUsageSelectedAuthExtension(selectedAuthID, observedAuthID, observedServiceTier, observedAt),
 	}
+}
+
+func buildCodexUsageSelectedAuthExtension(selectedAuthID, observedAuthID, observedServiceTier string, observedAt time.Time) *codexUsageSelectedAuthExtension {
+	selectedAuthID = strings.TrimSpace(selectedAuthID)
+	observedAuthID = strings.TrimSpace(observedAuthID)
+	observedServiceTier = strings.ToLower(strings.TrimSpace(observedServiceTier))
+	if selectedAuthID == "" || observedAuthID == "" || selectedAuthID != observedAuthID {
+		return nil
+	}
+	out := &codexUsageSelectedAuthExtension{
+		AuthID:      selectedAuthID,
+		ServiceTier: observedServiceTier,
+	}
+	if !observedAt.IsZero() {
+		ts := observedAt
+		out.ObservedAt = &ts
+	}
+	if out.ServiceTier == "" && out.ObservedAt == nil {
+		return nil
+	}
+	return out
 }
 
 func (h *Handler) codexUsageAuthBaseDir() string {
@@ -2296,6 +2325,13 @@ func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtension
 	out := &codexUsageExtensions{
 		Recovery: cloneCodexUsageRecovery(input.Recovery),
 	}
+	if input.SelectedAuth != nil {
+		out.SelectedAuth = &codexUsageSelectedAuthExtension{
+			AuthID:      strings.TrimSpace(input.SelectedAuth.AuthID),
+			ServiceTier: strings.TrimSpace(input.SelectedAuth.ServiceTier),
+			ObservedAt:  cloneTimePointer(input.SelectedAuth.ObservedAt),
+		}
+	}
 	if len(input.ActiveAuthFiles) > 0 {
 		out.ActiveAuthFiles = make([]codexUsageAuthFileExtensionItem, 0, len(input.ActiveAuthFiles))
 		for i := range input.ActiveAuthFiles {
@@ -2488,6 +2524,9 @@ func (h *Handler) codexUsageSnapshot() (codexUsagePayload, codexUsageSummaryResp
 	}
 
 	selectedAuthID := strings.TrimSpace(summary.SelectedAuthID)
+	observedAuthID := strings.TrimSpace(state.codexObservedServiceTierAuthID)
+	observedServiceTier := strings.TrimSpace(state.codexObservedServiceTier)
+	observedAt := state.codexObservedServiceTierAt
 	if selectedAuthID != "" {
 		for i := range summary.AuthFiles {
 			if strings.TrimSpace(summary.AuthFiles[i].AuthID) != selectedAuthID {
@@ -2498,7 +2537,7 @@ func (h *Handler) codexUsageSnapshot() (codexUsagePayload, codexUsageSummaryResp
 			break
 		}
 	}
-	liveExtensions := buildCodexUsageExtensions(state.codexUsageByAuth, time.Now().UTC(), h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup())
+	liveExtensions := buildCodexUsageExtensions(state.codexUsageByAuth, time.Now().UTC(), h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup(), selectedAuthID, observedAuthID, observedServiceTier, observedAt)
 	compat.Extensions = cloneCodexUsageExtensions(liveExtensions)
 	summary.CompatPayload.Extensions = cloneCodexUsageExtensions(liveExtensions)
 	ensureCodexTotalUsageMultiplier(&compat, h.codexFreePlanWeight(), h.codexProPlanWeight())

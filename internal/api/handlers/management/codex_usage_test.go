@@ -30,6 +30,9 @@ func seedTestCodexUsageState(h *Handler, state *codexUsageState) *Handler {
 	runtime.codexUsageSummary = state.codexUsageSummary
 	runtime.codexUsageHasData = state.codexUsageHasData
 	runtime.codexUsageSelected = state.codexUsageSelected
+	runtime.codexObservedServiceTierAuthID = state.codexObservedServiceTierAuthID
+	runtime.codexObservedServiceTier = state.codexObservedServiceTier
+	runtime.codexObservedServiceTierAt = state.codexObservedServiceTierAt
 	if state.codexUsageAsyncPoll.Load() {
 		runtime.codexUsageAsyncPoll.Store(true)
 	}
@@ -73,7 +76,7 @@ func TestBuildCodexUsageExtensions_PopulatesPriorityFromAuthFile(t *testing.T) {
 			Priority:     0,
 			LastPolledAt: time.Now().UTC(),
 		},
-	}, time.Now().UTC(), 0.2, 6.0, dir, nil)
+	}, time.Now().UTC(), 0.2, 6.0, dir, nil, "", "", "", time.Time{})
 	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
 		t.Fatal("expected one active auth file extension item")
 	}
@@ -117,7 +120,7 @@ func TestBuildCodexUsageExtensions_PopulatesPriorityFromAuthLookup(t *testing.T)
 			Priority:     0,
 			LastPolledAt: time.Now().UTC(),
 		},
-	}, time.Now().UTC(), 0.2, 6.0, "", map[string]*coreauth.Auth{"codex-auth.json": auth})
+	}, time.Now().UTC(), 0.2, 6.0, "", map[string]*coreauth.Auth{"codex-auth.json": auth}, "", "", "", time.Time{})
 	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
 		t.Fatal("expected one active auth file extension item")
 	}
@@ -303,7 +306,7 @@ func TestBuildCodexUsageExtensions_ResetDueShowsRecoveredWindow(t *testing.T) {
 				},
 			},
 		},
-	}, now, 0.2, 6.0, "", nil)
+	}, now, 0.2, 6.0, "", nil, "", "", "", time.Time{})
 	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
 		t.Fatal("expected one active auth file extension item")
 	}
@@ -313,6 +316,48 @@ func TestBuildCodexUsageExtensions_ResetDueShowsRecoveredWindow(t *testing.T) {
 	}
 	if item.FiveHour.UsedPercent != 0 || item.Week.UsedPercent != 0 {
 		t.Fatalf("expected auth file item windows to recover to full quota, got five_hour=%d week=%d", item.FiveHour.UsedPercent, item.Week.UsedPercent)
+	}
+}
+
+func TestBuildCodexUsageExtensions_IncludesSelectedAuthServiceTier(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"auth-1": {
+			AuthID:   "auth-1",
+			FileName: "codex-auth-1.json",
+			PlanType: "team",
+			Status:   "ok",
+		},
+	}, now, 0.2, 6.0, "", nil, "auth-1", "auth-1", "priority", now)
+	if exts == nil || exts.SelectedAuth == nil {
+		t.Fatalf("expected selected auth extension, got %#v", exts)
+	}
+	if exts.SelectedAuth.AuthID != "auth-1" {
+		t.Fatalf("expected selected auth id auth-1, got %q", exts.SelectedAuth.AuthID)
+	}
+	if exts.SelectedAuth.ServiceTier != "priority" {
+		t.Fatalf("expected selected auth service tier priority, got %q", exts.SelectedAuth.ServiceTier)
+	}
+	if exts.SelectedAuth.ObservedAt == nil || !exts.SelectedAuth.ObservedAt.Equal(now) {
+		t.Fatalf("expected selected auth observed_at=%s, got %#v", now, exts.SelectedAuth.ObservedAt)
+	}
+}
+
+func TestBuildCodexUsageExtensions_OmitsSelectedAuthServiceTierWhenObservedAuthDiffers(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"auth-1": {
+			AuthID:   "auth-1",
+			FileName: "codex-auth-1.json",
+			PlanType: "team",
+			Status:   "ok",
+		},
+	}, now, 0.2, 6.0, "", nil, "auth-1", "auth-2", "priority", now)
+	if exts == nil {
+		t.Fatal("expected extensions")
+	}
+	if exts.SelectedAuth != nil {
+		t.Fatalf("expected selected auth extension omitted when observed auth differs, got %#v", exts.SelectedAuth)
 	}
 }
 
@@ -901,6 +946,64 @@ func TestCodexUsageStatePersistence(t *testing.T) {
 	}
 	if compat.RateLimit == nil || compat.RateLimit.PrimaryWindow == nil || compat.RateLimit.PrimaryWindow.UsedPercent != 33 {
 		t.Fatalf("unexpected persisted compat payload: %+v", compat)
+	}
+	if compat.Extensions != nil && compat.Extensions.SelectedAuth != nil {
+		t.Fatalf("expected persisted payload to omit runtime selected auth service tier, got %#v", compat.Extensions.SelectedAuth)
+	}
+}
+
+func TestCodexUsageSnapshot_InjectsSelectedAuthServiceTierLive(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0).UTC()
+	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
+		codexUsageByAuth: map[string]codexAuthUsageStatus{
+			"auth-1": {
+				AuthID:   "auth-1",
+				FileName: "codex-auth-1.json",
+				Email:    "selected@example.com",
+				PlanType: "team",
+				Status:   "ok",
+				HasUsage: true,
+				Usage: &codexUsagePayload{
+					PlanType: "team",
+					RateLimit: &codexUsageRateLimit{
+						PrimaryWindow: &codexUsageWindow{
+							UsedPercent:        20,
+							LimitWindowSeconds: codexFiveHourWindowSecs,
+						},
+						SecondaryWindow: &codexUsageWindow{
+							UsedPercent:        40,
+							LimitWindowSeconds: codexWeeklyWindowSecs,
+						},
+					},
+				},
+			},
+		},
+		codexUsageCompat: defaultCodexUsagePayload(),
+		codexUsageSummary: codexUsageSummaryResponse{
+			SelectedAuthID: "auth-1",
+		},
+		codexUsageHasData:              true,
+		codexUsageSelected:             "auth-1",
+		codexObservedServiceTierAuthID: "auth-1",
+		codexObservedServiceTier:       "priority",
+		codexObservedServiceTierAt:     now,
+	})
+
+	compat, summary, hasData := h.codexUsageSnapshot()
+	if !hasData {
+		t.Fatal("expected hasData=true")
+	}
+	if compat.Extensions == nil || compat.Extensions.SelectedAuth == nil {
+		t.Fatalf("expected compat selected auth extension, got %#v", compat.Extensions)
+	}
+	if compat.Extensions.SelectedAuth.ServiceTier != "priority" {
+		t.Fatalf("expected compat selected auth service tier priority, got %q", compat.Extensions.SelectedAuth.ServiceTier)
+	}
+	if summary.CompatPayload.Extensions == nil || summary.CompatPayload.Extensions.SelectedAuth == nil {
+		t.Fatalf("expected summary compat selected auth extension, got %#v", summary.CompatPayload.Extensions)
+	}
+	if summary.CompatPayload.Extensions.SelectedAuth.ServiceTier != "priority" {
+		t.Fatalf("expected summary compat selected auth service tier priority, got %q", summary.CompatPayload.Extensions.SelectedAuth.ServiceTier)
 	}
 }
 

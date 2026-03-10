@@ -54,6 +54,7 @@ const (
 
 type pinnedAuthContextKey struct{}
 type selectedAuthCallbackContextKey struct{}
+type observedServiceTierCallbackContextKey struct{}
 type executionSessionContextKey struct{}
 
 // WithPinnedAuthID returns a child context that requests execution on a specific auth ID.
@@ -77,6 +78,17 @@ func WithSelectedAuthIDCallback(ctx context.Context, callback func(string)) cont
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, selectedAuthCallbackContextKey{}, callback)
+}
+
+// WithObservedServiceTierCallback returns a child context that receives an upstream-observed service tier for an auth.
+func WithObservedServiceTierCallback(ctx context.Context, callback func(string, string)) context.Context {
+	if callback == nil {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, observedServiceTierCallbackContextKey{}, callback)
 }
 
 // WithExecutionSessionID returns a child context tagged with a long-lived execution session ID.
@@ -237,6 +249,24 @@ func selectedAuthIDCallbackFromContext(ctx context.Context) func(string) {
 	return nil
 }
 
+func observedServiceTierCallbackFromContext(ctx context.Context) func(string, string) {
+	if ctx == nil {
+		return nil
+	}
+	raw := ctx.Value(observedServiceTierCallbackContextKey{})
+	if callback, ok := raw.(func(string, string)); ok && callback != nil {
+		return callback
+	}
+	return nil
+}
+
+// ReportObservedServiceTier notifies any registered callback of the upstream-confirmed service tier.
+func ReportObservedServiceTier(ctx context.Context, authID string, serviceTier string) {
+	if callback := observedServiceTierCallbackFromContext(ctx); callback != nil {
+		callback(authID, serviceTier)
+	}
+}
+
 func executionSessionIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -264,6 +294,9 @@ type BaseAPIHandler struct {
 
 	// SelectedAuthIDCallback observes the auth selected for request execution.
 	SelectedAuthIDCallback func(string)
+
+	// ObservedServiceTierCallback observes the upstream-confirmed service tier for an auth.
+	ObservedServiceTierCallback func(string, string)
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -296,6 +329,14 @@ func (h *BaseAPIHandler) SetSelectedAuthIDCallback(callback func(string)) {
 		return
 	}
 	h.SelectedAuthIDCallback = callback
+}
+
+// SetObservedServiceTierCallback registers a callback invoked with the upstream-confirmed service tier for an auth.
+func (h *BaseAPIHandler) SetObservedServiceTierCallback(callback func(string, string)) {
+	if h == nil {
+		return
+	}
+	h.ObservedServiceTierCallback = callback
 }
 
 // GetAlt extracts the 'alt' parameter from the request query string.
@@ -352,6 +393,9 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	newCtx, cancel := context.WithCancel(parentCtx)
 	if h != nil && h.SelectedAuthIDCallback != nil && selectedAuthIDCallbackFromContext(newCtx) == nil {
 		newCtx = WithSelectedAuthIDCallback(newCtx, h.SelectedAuthIDCallback)
+	}
+	if h != nil && h.ObservedServiceTierCallback != nil && observedServiceTierCallbackFromContext(newCtx) == nil {
+		newCtx = WithObservedServiceTierCallback(newCtx, h.ObservedServiceTierCallback)
 	}
 	if requestCtx != nil && requestCtx != parentCtx {
 		go func() {
