@@ -8,5 +8,6 @@ import (
 )
 
 func (s *Server) codexModels(c *gin.Context) {
-	c.JSON(http.StatusOK, codexmodels.AvailableCodexModels())
+	clientVersion := c.Query("client_version")
+	c.JSON(http.StatusOK, codexmodels.AvailableCodexModels(clientVersion))
 }

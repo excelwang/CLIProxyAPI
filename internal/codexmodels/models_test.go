@@ -6,40 +6,89 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 )
 
-func TestAvailableCodexModels_UsesRuntimeAvailableSet(t *testing.T) {
-	clientID := "test-codexmodels-runtime"
+func registerCodexModelForTest(t *testing.T, clientID string, models []*registry.ModelInfo) {
+	t.Helper()
 	reg := registry.GetGlobalRegistry()
-	reg.RegisterClient(clientID, "codex", []*registry.ModelInfo{
-		{
-			ID:                       "gpt-5.4",
-			DisplayName:              "GPT-5.4",
-			Description:              "Latest GPT-5.4",
-			ContextLength:            400000,
-			SupportedParameters:      []string{"tools"},
-			SupportedInputModalities: []string{"text", "image"},
-			Thinking: &registry.ThinkingSupport{
-				Levels: []string{"low", "medium", "high"},
-			},
-		},
-	})
+	reg.RegisterClient(clientID, "codex", models)
 	t.Cleanup(func() {
 		reg.UnregisterClient(clientID)
 	})
+}
 
-	response := AvailableCodexModels()
-	if len(response.Models) == 0 {
-		t.Fatal("expected codex models response to include runtime model")
-	}
-
-	var found *ModelInfo
-	for index := range response.Models {
-		if response.Models[index].Slug == "gpt-5.4" {
-			found = &response.Models[index]
-			break
+func findModelBySlug(models []ModelInfo, slug string) *ModelInfo {
+	for i := range models {
+		if models[i].Slug == slug {
+			return &models[i]
 		}
 	}
+	return nil
+}
+
+func TestAvailableCodexModels_UsesCatalogMetadataForKnownModel(t *testing.T) {
+	registerCodexModelForTest(t, "test-codexmodels-catalog", []*registry.ModelInfo{{
+		ID:                       "gpt-5.2-codex",
+		DisplayName:              "runtime display should not win",
+		Description:              "runtime description should not win",
+		ContextLength:            400000,
+		SupportedParameters:      []string{"tools"},
+		SupportedInputModalities: []string{"text", "image"},
+		Thinking:                 &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}},
+	}})
+
+	response := AvailableCodexModels("0.111.0")
+	found := findModelBySlug(response.Models, "gpt-5.2-codex")
 	if found == nil {
-		t.Fatalf("expected runtime model gpt-5.4 in response, got %+v", response.Models)
+		t.Fatalf("expected known model in response, got %+v", response.Models)
+	}
+	if found.DisplayName != "gpt-5.2-codex" {
+		t.Fatalf("expected catalog display_name, got %q", found.DisplayName)
+	}
+	if found.Priority != 3 {
+		t.Fatalf("expected catalog priority 3, got %d", found.Priority)
+	}
+	if found.MinimalClientVersion == nil || found.MinimalClientVersion.Major != 0 || found.MinimalClientVersion.Minor != 0 || found.MinimalClientVersion.Patch != 1 {
+		t.Fatalf("unexpected minimal client version: %+v", found.MinimalClientVersion)
+	}
+	if found.Visibility != "list" {
+		t.Fatalf("unexpected visibility: %q", found.Visibility)
+	}
+	if found.BaseInstructions == fallbackBaseInstructions {
+		t.Fatal("expected catalog base instructions, got fallback instructions")
+	}
+	if !found.SupportedInAPI {
+		t.Fatal("expected supported_in_api=true")
+	}
+}
+
+func TestAvailableCodexModels_FiltersKnownModelsByClientVersion(t *testing.T) {
+	registerCodexModelForTest(t, "test-codexmodels-client-version", []*registry.ModelInfo{{ID: "gpt-5.2-codex"}, {ID: "gpt-5.3-codex"}})
+
+	response := AvailableCodexModels("0.50.0")
+	if findModelBySlug(response.Models, "gpt-5.2-codex") == nil {
+		t.Fatal("expected gpt-5.2-codex to remain visible for older clients")
+	}
+	if findModelBySlug(response.Models, "gpt-5.3-codex") != nil {
+		t.Fatal("expected gpt-5.3-codex to be filtered by minimal_client_version")
+	}
+}
+
+func TestAvailableCodexModels_FallbackUnknownModelPreservesRuntimeMetadata(t *testing.T) {
+	registerCodexModelForTest(t, "test-codexmodels-runtime", []*registry.ModelInfo{{
+		ID:                       "gpt-5.4",
+		DisplayName:              "GPT-5.4",
+		Description:              "Latest GPT-5.4",
+		ContextLength:            400000,
+		SupportedParameters:      []string{"tools"},
+		SupportedInputModalities: []string{"text", "image"},
+		Thinking: &registry.ThinkingSupport{
+			Levels: []string{"low", "medium", "high"},
+		},
+	}})
+
+	response := AvailableCodexModels("0.111.0")
+	found := findModelBySlug(response.Models, "gpt-5.4")
+	if found == nil {
+		t.Fatalf("expected fallback model gpt-5.4 in response, got %+v", response.Models)
 	}
 	if found.DisplayName != "GPT-5.4" {
 		t.Fatalf("unexpected display name: %q", found.DisplayName)
@@ -58,5 +107,8 @@ func TestAvailableCodexModels_UsesRuntimeAvailableSet(t *testing.T) {
 	}
 	if len(found.SupportedReasoningLevels) != 3 {
 		t.Fatalf("expected three reasoning levels, got %+v", found.SupportedReasoningLevels)
+	}
+	if found.Priority <= 3 {
+		t.Fatalf("expected fallback priority after known catalog models, got %d", found.Priority)
 	}
 }

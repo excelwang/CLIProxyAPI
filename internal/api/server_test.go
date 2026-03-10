@@ -227,6 +227,60 @@ func TestCodexNativeModelsRoutes(t *testing.T) {
 	}
 }
 
+func TestCodexNativeModelsRoutes_ApplyClientVersionFiltering(t *testing.T) {
+	server := newTestServer(t)
+	configaccess.Register(&server.cfg.SDKConfig)
+	t.Cleanup(func() {
+		sdkaccess.UnregisterProvider(sdkaccess.AccessProviderTypeConfigAPIKey)
+	})
+	server.accessManager.SetProviders(sdkaccess.RegisteredProviders())
+
+	clientID := "test-codex-native-models-client-version-route"
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(clientID, "codex", []*registry.ModelInfo{
+		{ID: "gpt-5.2-codex"},
+		{ID: "gpt-5.3-codex"},
+	})
+	t.Cleanup(func() {
+		reg.UnregisterClient(clientID)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/codex/models?client_version=0.50.0", nil)
+	req.Header.Set("Authorization", "Bearer test-key")
+
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d want %d; body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var payload struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v; body=%s", err, rr.Body.String())
+	}
+
+	var saw52, saw53 bool
+	for _, model := range payload.Models {
+		switch model.Slug {
+		case "gpt-5.2-codex":
+			saw52 = true
+		case "gpt-5.3-codex":
+			saw53 = true
+		}
+	}
+	if !saw52 {
+		t.Fatal("expected gpt-5.2-codex to remain visible for older client_version")
+	}
+	if saw53 {
+		t.Fatal("expected gpt-5.3-codex to be filtered by client_version")
+	}
+}
+
 func TestCodexNativeModelsRoutes_RequireValidCredentialsWhenProvidersConfigured(t *testing.T) {
 	server := newTestServer(t)
 	configaccess.Register(&server.cfg.SDKConfig)
