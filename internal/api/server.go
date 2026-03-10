@@ -347,6 +347,20 @@ func (s *Server) setupRoutes() {
 		v1beta.GET("/models/*action", geminiHandlers.GeminiGetHandler)
 	}
 
+	// Codex-native model discovery routes used by the official Codex clients
+	// when a custom base_url is configured under ChatGPT auth mode.
+	codexAPI := s.engine.Group("/api/codex")
+	codexAPI.Use(AuthMiddleware(s.accessManager))
+	{
+		codexAPI.GET("/models", s.codexModels)
+	}
+
+	backendCodex := s.engine.Group("/backend-api/codex")
+	backendCodex.Use(AuthMiddleware(s.accessManager))
+	{
+		backendCodex.GET("/models", s.codexModels)
+	}
+
 	// Root endpoint
 	s.engine.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{

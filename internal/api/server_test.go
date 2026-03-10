@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"time"
 
 	gin "github.com/gin-gonic/gin"
+	configaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/config_access"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
@@ -109,6 +112,101 @@ func TestAmpProviderModelRoutes(t *testing.T) {
 				t.Fatalf("response body for %s missing %q: %s", tc.path, tc.wantContains, body)
 			}
 		})
+	}
+}
+
+func TestCodexNativeModelsRoutes(t *testing.T) {
+	server := newTestServer(t)
+	configaccess.Register(&server.cfg.SDKConfig)
+	t.Cleanup(func() {
+		sdkaccess.UnregisterProvider(sdkaccess.AccessProviderTypeConfigAPIKey)
+	})
+	server.accessManager.SetProviders(sdkaccess.RegisteredProviders())
+
+	clientID := "test-codex-native-models-route"
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(clientID, "codex", []*registry.ModelInfo{
+		{
+			ID:                  "gpt-5.4",
+			DisplayName:         "GPT-5.4",
+			Description:         "Latest GPT-5.4",
+			ContextLength:       400000,
+			SupportedParameters: []string{"tools"},
+		},
+	})
+	t.Cleanup(func() {
+		reg.UnregisterClient(clientID)
+	})
+
+	testCases := []string{
+		"/api/codex/models?client_version=0.111.0",
+		"/backend-api/codex/models?client_version=0.111.0",
+	}
+
+	for _, path := range testCases {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer test-key")
+
+		rr := httptest.NewRecorder()
+		server.engine.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("unexpected status code for %s: got %d want %d; body=%s", path, rr.Code, http.StatusOK, rr.Body.String())
+		}
+
+		var payload struct {
+			Models []struct {
+				Slug           string `json:"slug"`
+				DisplayName    string `json:"display_name"`
+				SupportedInAPI bool   `json:"supported_in_api"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("failed to decode %s response: %v; body=%s", path, err, rr.Body.String())
+		}
+		if len(payload.Models) == 0 {
+			t.Fatalf("expected models in %s response, got empty payload", path)
+		}
+
+		found := false
+		for _, model := range payload.Models {
+			if model.Slug != "gpt-5.4" {
+				continue
+			}
+			found = true
+			if model.DisplayName != "GPT-5.4" {
+				t.Fatalf("unexpected display name for %s: %+v", path, model)
+			}
+			if !model.SupportedInAPI {
+				t.Fatalf("expected supported_in_api=true for %s", path)
+			}
+			break
+		}
+		if !found {
+			t.Fatalf("expected gpt-5.4 in %s response, got %+v", path, payload.Models)
+		}
+	}
+}
+
+func TestCodexNativeModelsRoutes_RequireValidCredentialsWhenProvidersConfigured(t *testing.T) {
+	server := newTestServer(t)
+	configaccess.Register(&server.cfg.SDKConfig)
+	t.Cleanup(func() {
+		sdkaccess.UnregisterProvider(sdkaccess.AccessProviderTypeConfigAPIKey)
+	})
+	server.accessManager.SetProviders(sdkaccess.RegisteredProviders())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/codex/models?client_version=0.111.0", nil)
+	req.Header.Set("Authorization", "Bearer wrong-key")
+
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected status code: got %d want %d; body=%s", rr.Code, http.StatusUnauthorized, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Invalid API key") {
+		t.Fatalf("unexpected error body: %s", rr.Body.String())
 	}
 }
 
