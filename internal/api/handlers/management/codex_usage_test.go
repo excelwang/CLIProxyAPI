@@ -1028,6 +1028,30 @@ func TestCodexUsageSnapshot_InjectsSelectedAuthServiceTierLive(t *testing.T) {
 	}
 }
 
+func TestObservedServiceTierCallback_RecordsLatestObservedTierWithoutCodexAuthLookup(t *testing.T) {
+	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
+		codexUsageByAuth: make(map[string]codexAuthUsageStatus),
+		codexUsageCompat: defaultCodexUsagePayload(),
+	})
+
+	cb := h.ObservedServiceTierCallback()
+	if cb == nil {
+		t.Fatal("expected observed service tier callback")
+	}
+	cb("openai-compat-auth", "priority")
+
+	authID, serviceTier, observedAt := h.observedCodexServiceTierSnapshot()
+	if authID != "openai-compat-auth" {
+		t.Fatalf("expected observed auth id openai-compat-auth, got %q", authID)
+	}
+	if serviceTier != "priority" {
+		t.Fatalf("expected observed service tier priority, got %q", serviceTier)
+	}
+	if observedAt.IsZero() {
+		t.Fatal("expected non-zero observed timestamp")
+	}
+}
+
 func TestGetCodexUsageCompatDefaultsToGuest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &Handler{}

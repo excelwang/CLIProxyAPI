@@ -5,22 +5,22 @@ import (
 	"time"
 )
 
-// ObservedServiceTierCallback returns a callback that records the upstream-confirmed service tier for a Codex auth.
+// ObservedServiceTierCallback returns a callback that records the upstream-confirmed service tier for the latest selected auth.
 func (h *Handler) ObservedServiceTierCallback() func(string, string) {
 	if h == nil {
 		return nil
 	}
 	return func(authID string, serviceTier string) {
-		h.captureObservedCodexServiceTier(authID, serviceTier)
+		h.captureObservedServiceTier(authID, serviceTier)
 	}
 }
 
-func (h *Handler) captureObservedCodexServiceTier(authID string, serviceTier string) {
+func (h *Handler) captureObservedServiceTier(authID string, serviceTier string) {
 	if h == nil {
 		return
 	}
 	authID = strings.TrimSpace(authID)
-	if authID == "" || !h.isCodexAuthID(authID) {
+	if authID == "" {
 		return
 	}
 	state := h.codexUsageStateRef()
