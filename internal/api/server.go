@@ -358,6 +358,12 @@ func (s *Server) setupRoutes() {
 		v1beta.GET("/models/*action", geminiHandlers.GeminiGetHandler)
 	}
 
+	codexAPI := s.engine.Group("/api/codex")
+	codexAPI.Use(AuthMiddleware(s.accessManager))
+	{
+		codexAPI.GET("/auth.json", s.downloadCodexPluginAuthJSON)
+	}
+
 	// Root endpoint
 	s.engine.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
