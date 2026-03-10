@@ -475,11 +475,11 @@ func applyCodexUsageRequestMetadata(c *gin.Context, payload *codexUsagePayload) 
 	if planType := normalizeCodexUsagePlanType(metadata["plan_type"]); planType != "guest" || strings.TrimSpace(metadata["plan_type"]) != "" {
 		payload.PlanType = planType
 	}
-	if payload.Email == "" {
-		payload.Email = strings.TrimSpace(metadata["email"])
+	if email := strings.TrimSpace(metadata["email"]); email != "" {
+		payload.Email = email
 	}
-	if payload.AccountID == "" {
-		payload.AccountID = strings.TrimSpace(metadata["account_id"])
+	if accountID := strings.TrimSpace(metadata["account_id"]); accountID != "" {
+		payload.AccountID = accountID
 	}
 }
 

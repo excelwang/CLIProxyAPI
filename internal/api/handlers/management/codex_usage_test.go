@@ -1144,6 +1144,46 @@ func TestGetCodexUsageCompat_UsesRequestPlanTypeFromAccessMetadata(t *testing.T)
 	}
 }
 
+func TestGetCodexUsageCompat_RequestIdentityOverridesSelectedAuthIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
+		codexUsageCompat: codexUsagePayload{
+			PlanType:  "pro",
+			Email:     "selected-auth@example.com",
+			AccountID: "selected-auth-account",
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/codex/usage", nil)
+	c.Set("accessMetadata", map[string]string{
+		"plan_type":  "team",
+		"email":      "plugin@example.com",
+		"account_id": "plugin-account",
+		"plugin_token": "true",
+	})
+
+	h.GetCodexUsageCompat(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var payload codexUsagePayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.PlanType != "team" {
+		t.Fatalf("expected plan_type team from access metadata, got %q", payload.PlanType)
+	}
+	if payload.Email != "plugin@example.com" {
+		t.Fatalf("expected plugin email to override selected auth email, got %q", payload.Email)
+	}
+	if payload.AccountID != "plugin-account" {
+		t.Fatalf("expected plugin account id to override selected auth account id, got %q", payload.AccountID)
+	}
+}
+
 func TestGetCodexUsageCompat_ReturnsAggregatedPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
