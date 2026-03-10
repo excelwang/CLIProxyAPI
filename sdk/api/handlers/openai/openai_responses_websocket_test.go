@@ -266,7 +266,6 @@ func TestAppendWebsocketEvent(t *testing.T) {
 	}
 }
 
-
 func TestAppendWebsocketEventTruncatesAtLimit(t *testing.T) {
 	var builder strings.Builder
 	payload := bytes.Repeat([]byte("x"), wsBodyLogMaxSize)
@@ -346,6 +345,7 @@ func TestForwardResponsesWebsocketPreservesCompletedEvent(t *testing.T) {
 
 		var bodyLog strings.Builder
 		completedOutput, err, _ := (*OpenAIResponsesAPIHandler)(nil).forwardResponsesWebsocket(
+			context.Background(),
 			ctx,
 			conn,
 			func(...interface{}) {},

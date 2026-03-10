@@ -182,7 +182,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		}
 		dataChan, _, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, requestJSON, "")
 
-		completedOutput, errForward, resetPinnedAuth := h.forwardResponsesWebsocket(c, conn, cliCancel, dataChan, errChan, &wsBodyLog, passthroughSessionID)
+		completedOutput, errForward, resetPinnedAuth := h.forwardResponsesWebsocket(cliCtx, c, conn, cliCancel, dataChan, errChan, &wsBodyLog, passthroughSessionID)
 		if resetPinnedAuth {
 			if strings.TrimSpace(pinnedAuthID) != "" {
 				log.Infof("responses websocket: reset pinned auth id=%s auth=%s", passthroughSessionID, strings.TrimSpace(pinnedAuthID))
@@ -603,6 +603,7 @@ func normalizeJSONArrayRaw(raw []byte) string {
 }
 
 func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
+	cliCtx context.Context,
 	c *gin.Context,
 	conn *websocket.Conn,
 	cancel handlers.APIHandlerCancelFunc,
@@ -692,6 +693,9 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			payloads := websocketJSONPayloadsFromChunk(chunk)
 			for i := range payloads {
 				eventType := gjson.GetBytes(payloads[i], "type").String()
+				if eventType == wsEventTypeCompleted || eventType == "response.done" {
+					handlers.ReportObservedServiceTier(cliCtx, "", gjson.GetBytes(payloads[i], "response.service_tier").String())
+				}
 				if eventType == wsEventTypeCompleted {
 					completed = true
 					completedOutput = responseCompletedOutputFromPayload(payloads[i])

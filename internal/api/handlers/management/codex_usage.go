@@ -148,6 +148,8 @@ type codexUsageRecovery struct {
 type codexUsageExtensions struct {
 	ActiveAuthFiles []codexUsageAuthFileExtensionItem `json:"active_auth_files,omitempty"`
 	Recovery        *codexUsageRecovery               `json:"recovery,omitempty"`
+	ServiceTier     string                            `json:"service_tier,omitempty"`
+	ObservedAt      *time.Time                        `json:"observed_at,omitempty"`
 	SelectedAuth    *codexUsageSelectedAuthExtension  `json:"selected_auth,omitempty"`
 }
 
@@ -709,6 +711,8 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 	return &codexUsageExtensions{
 		ActiveAuthFiles: items,
 		Recovery:        buildCodexUsageRecovery(current, now, freePlanWeight, proPlanWeight),
+		ServiceTier:     observedServiceTier,
+		ObservedAt:      cloneTimePointer(&observedAt),
 		SelectedAuth:    buildCodexUsageSelectedAuthExtension(selectedAuthID, observedAuthID, observedServiceTier, observedAt),
 	}
 }
@@ -2326,7 +2330,9 @@ func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtension
 		return nil
 	}
 	out := &codexUsageExtensions{
-		Recovery: cloneCodexUsageRecovery(input.Recovery),
+		Recovery:    cloneCodexUsageRecovery(input.Recovery),
+		ServiceTier: strings.TrimSpace(input.ServiceTier),
+		ObservedAt:  cloneTimePointer(input.ObservedAt),
 	}
 	if input.SelectedAuth != nil {
 		out.SelectedAuth = &codexUsageSelectedAuthExtension{

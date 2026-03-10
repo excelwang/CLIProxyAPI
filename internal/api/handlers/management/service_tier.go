@@ -20,14 +20,14 @@ func (h *Handler) captureObservedServiceTier(authID string, serviceTier string) 
 		return
 	}
 	authID = strings.TrimSpace(authID)
-	if authID == "" {
-		return
-	}
 	state := h.codexUsageStateRef()
 	if state == nil {
 		return
 	}
 	serviceTier = strings.ToLower(strings.TrimSpace(serviceTier))
+	if serviceTier == "" {
+		return
+	}
 	now := time.Now().UTC()
 
 	state.codexUsageMu.Lock()

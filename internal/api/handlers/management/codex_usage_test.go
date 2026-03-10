@@ -332,6 +332,9 @@ func TestBuildCodexUsageExtensions_IncludesSelectedAuthServiceTier(t *testing.T)
 	if exts == nil || exts.SelectedAuth == nil {
 		t.Fatalf("expected selected auth extension, got %#v", exts)
 	}
+	if exts.ServiceTier != "priority" {
+		t.Fatalf("expected top-level service tier priority, got %q", exts.ServiceTier)
+	}
 	if exts.SelectedAuth.AuthID != "auth-1" {
 		t.Fatalf("expected selected auth id auth-1, got %q", exts.SelectedAuth.AuthID)
 	}
@@ -356,6 +359,9 @@ func TestBuildCodexUsageExtensions_OmitsSelectedAuthServiceTierWhenObservedAuthD
 	if exts == nil {
 		t.Fatal("expected extensions")
 	}
+	if exts.ServiceTier != "priority" {
+		t.Fatalf("expected top-level service tier priority, got %q", exts.ServiceTier)
+	}
 	if exts.SelectedAuth != nil {
 		t.Fatalf("expected selected auth extension omitted when observed auth differs, got %#v", exts.SelectedAuth)
 	}
@@ -373,6 +379,9 @@ func TestBuildCodexUsageExtensions_FallsBackToObservedAuthWhenSelectedAuthMissin
 	}, now, 0.2, 6.0, "", nil, "", "auth-1", "default", now)
 	if exts == nil || exts.SelectedAuth == nil {
 		t.Fatalf("expected selected auth extension from observed auth fallback, got %#v", exts)
+	}
+	if exts.ServiceTier != "default" {
+		t.Fatalf("expected top-level service tier default, got %q", exts.ServiceTier)
 	}
 	if exts.SelectedAuth.AuthID != "auth-1" {
 		t.Fatalf("expected fallback auth id auth-1, got %q", exts.SelectedAuth.AuthID)
@@ -1017,11 +1026,17 @@ func TestCodexUsageSnapshot_InjectsSelectedAuthServiceTierLive(t *testing.T) {
 	if compat.Extensions == nil || compat.Extensions.SelectedAuth == nil {
 		t.Fatalf("expected compat selected auth extension, got %#v", compat.Extensions)
 	}
+	if compat.Extensions.ServiceTier != "priority" {
+		t.Fatalf("expected compat top-level service tier priority, got %q", compat.Extensions.ServiceTier)
+	}
 	if compat.Extensions.SelectedAuth.ServiceTier != "priority" {
 		t.Fatalf("expected compat selected auth service tier priority, got %q", compat.Extensions.SelectedAuth.ServiceTier)
 	}
 	if summary.CompatPayload.Extensions == nil || summary.CompatPayload.Extensions.SelectedAuth == nil {
 		t.Fatalf("expected summary compat selected auth extension, got %#v", summary.CompatPayload.Extensions)
+	}
+	if summary.CompatPayload.Extensions.ServiceTier != "priority" {
+		t.Fatalf("expected summary compat top-level service tier priority, got %q", summary.CompatPayload.Extensions.ServiceTier)
 	}
 	if summary.CompatPayload.Extensions.SelectedAuth.ServiceTier != "priority" {
 		t.Fatalf("expected summary compat selected auth service tier priority, got %q", summary.CompatPayload.Extensions.SelectedAuth.ServiceTier)
@@ -1046,6 +1061,30 @@ func TestObservedServiceTierCallback_RecordsLatestObservedTierWithoutCodexAuthLo
 	}
 	if serviceTier != "priority" {
 		t.Fatalf("expected observed service tier priority, got %q", serviceTier)
+	}
+	if observedAt.IsZero() {
+		t.Fatal("expected non-zero observed timestamp")
+	}
+}
+
+func TestObservedServiceTierCallback_RecordsServiceTierWithoutAuthID(t *testing.T) {
+	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
+		codexUsageByAuth: make(map[string]codexAuthUsageStatus),
+		codexUsageCompat: defaultCodexUsagePayload(),
+	})
+
+	cb := h.ObservedServiceTierCallback()
+	if cb == nil {
+		t.Fatal("expected observed service tier callback")
+	}
+	cb("", "default")
+
+	authID, serviceTier, observedAt := h.observedCodexServiceTierSnapshot()
+	if authID != "" {
+		t.Fatalf("expected empty observed auth id, got %q", authID)
+	}
+	if serviceTier != "default" {
+		t.Fatalf("expected observed service tier default, got %q", serviceTier)
 	}
 	if observedAt.IsZero() {
 		t.Fatal("expected non-zero observed timestamp")

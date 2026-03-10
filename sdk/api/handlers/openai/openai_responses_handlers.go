@@ -131,6 +131,7 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 		cliCancel(errMsg.Error)
 		return
 	}
+	handlers.ReportObservedServiceTier(cliCtx, "", gjson.GetBytes(resp, "service_tier").String())
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	_, _ = c.Writer.Write(resp)
 	cliCancel()
@@ -157,6 +158,7 @@ func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, r
 		cliCancel(errMsg.Error)
 		return
 	}
+	handlers.ReportObservedServiceTier(cliCtx, "", gjson.GetBytes(resp, "service_tier").String())
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	_, _ = c.Writer.Write(resp)
 	cliCancel()
@@ -238,15 +240,16 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 			flusher.Flush()
 
 			// Continue
-			h.forwardResponsesStream(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan)
+			h.forwardResponsesStream(cliCtx, c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan)
 			return
 		}
 	}
 }
 
-func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
+func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(cliCtx context.Context, c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
 		WriteChunk: func(chunk []byte) {
+			reportObservedServiceTierFromSSEChunk(cliCtx, chunk)
 			if bytes.HasPrefix(chunk, []byte("event:")) {
 				_, _ = c.Writer.Write([]byte("\n"))
 			}
@@ -272,4 +275,22 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 			_, _ = c.Writer.Write([]byte("\n"))
 		},
 	})
+}
+
+func reportObservedServiceTierFromSSEChunk(ctx context.Context, chunk []byte) {
+	lines := bytes.Split(chunk, []byte("\n"))
+	for i := range lines {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[5:])
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) || !gjson.ValidBytes(payload) {
+			continue
+		}
+		eventType := gjson.GetBytes(payload, "type").String()
+		if eventType == "response.completed" || eventType == "response.done" {
+			handlers.ReportObservedServiceTier(ctx, "", gjson.GetBytes(payload, "response.service_tier").String())
+		}
+	}
 }
