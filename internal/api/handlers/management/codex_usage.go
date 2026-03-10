@@ -145,9 +145,15 @@ type codexUsageRecovery struct {
 	Combined *codexUsageCombinedRecovery `json:"combined,omitempty"`
 }
 
+type codexUsageMetaExtension struct {
+	TotalUsageMultiplier float64              `json:"total_usage_multiplier,omitempty"`
+	CodeReviewRateLimit  *codexUsageRateLimit `json:"code_review_rate_limit,omitempty"`
+}
+
 type codexUsageExtensions struct {
 	ActiveAuthFiles []codexUsageAuthFileExtensionItem `json:"active_auth_files,omitempty"`
 	Recovery        *codexUsageRecovery               `json:"recovery,omitempty"`
+	Meta            *codexUsageMetaExtension          `json:"meta,omitempty"`
 	ServiceTier     string                            `json:"service_tier,omitempty"`
 	ObservedAt      *time.Time                        `json:"observed_at,omitempty"`
 	SelectedAuth    *codexUsageSelectedAuthExtension  `json:"selected_auth,omitempty"`
@@ -435,6 +441,48 @@ func defaultCodexUsagePayload() codexUsagePayload {
 	return codexUsagePayload{PlanType: "guest"}
 }
 
+func normalizeCodexUsagePlanType(planType string) string {
+	normalized := strings.ToLower(strings.TrimSpace(planType))
+	if normalized == "" {
+		return "guest"
+	}
+	return normalized
+}
+
+func codexUsageRequestMetadata(c *gin.Context) map[string]string {
+	if c == nil {
+		return nil
+	}
+	raw, exists := c.Get("accessMetadata")
+	if !exists || raw == nil {
+		return nil
+	}
+	metadata, ok := raw.(map[string]string)
+	if !ok || len(metadata) == 0 {
+		return nil
+	}
+	return metadata
+}
+
+func applyCodexUsageRequestMetadata(c *gin.Context, payload *codexUsagePayload) {
+	if payload == nil {
+		return
+	}
+	metadata := codexUsageRequestMetadata(c)
+	if len(metadata) == 0 {
+		return
+	}
+	if planType := normalizeCodexUsagePlanType(metadata["plan_type"]); planType != "guest" || strings.TrimSpace(metadata["plan_type"]) != "" {
+		payload.PlanType = planType
+	}
+	if payload.Email == "" {
+		payload.Email = strings.TrimSpace(metadata["email"])
+	}
+	if payload.AccountID == "" {
+		payload.AccountID = strings.TrimSpace(metadata["account_id"])
+	}
+}
+
 // refreshCodexUsageFromCacheTTL updates codex usage cache on demand.
 // It never polls upstream unless a specific auth file cache TTL has expired.
 func (h *Handler) refreshCodexUsageFromCacheTTL(ctx context.Context) {
@@ -529,6 +577,7 @@ func (h *Handler) updateCodexUsageState(current map[string]codexAuthUsageStatus,
 	compatPayload, totalSummary, withUsage := aggregateCodexUsage(current, h.codexFreePlanWeight(), h.codexProPlanWeight())
 	fillCodexCompatAccountEmailFromSelected(&compatPayload, current, selectedAuthID)
 	compatPayload.Extensions = buildCodexUsageExtensions(current, now, h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup(), "", "", "", time.Time{})
+	enrichCodexUsageExtensionsMeta(compatPayload.Extensions, compatPayload)
 	authErrors := 0
 	authList := make([]codexAuthUsageStatus, 0, len(current))
 	for _, item := range current {
@@ -739,6 +788,19 @@ func buildCodexUsageSelectedAuthExtension(selectedAuthID, observedAuthID, observ
 		return nil
 	}
 	return out
+}
+
+func enrichCodexUsageExtensionsMeta(ext *codexUsageExtensions, payload codexUsagePayload) {
+	if ext == nil {
+		return
+	}
+	if payload.TotalUsageMultiplier <= 0 && payload.CodeReviewRateLimit == nil {
+		return
+	}
+	ext.Meta = &codexUsageMetaExtension{
+		TotalUsageMultiplier: payload.TotalUsageMultiplier,
+		CodeReviewRateLimit:  cloneCodexUsageRateLimit(payload.CodeReviewRateLimit),
+	}
 }
 
 func (h *Handler) codexUsageAuthBaseDir() string {
@@ -2334,6 +2396,12 @@ func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtension
 		ServiceTier: strings.TrimSpace(input.ServiceTier),
 		ObservedAt:  cloneTimePointer(input.ObservedAt),
 	}
+	if input.Meta != nil {
+		out.Meta = &codexUsageMetaExtension{
+			TotalUsageMultiplier: input.Meta.TotalUsageMultiplier,
+			CodeReviewRateLimit:  cloneCodexUsageRateLimit(input.Meta.CodeReviewRateLimit),
+		}
+	}
 	if input.SelectedAuth != nil {
 		out.SelectedAuth = &codexUsageSelectedAuthExtension{
 			AuthID:      strings.TrimSpace(input.SelectedAuth.AuthID),
@@ -2547,6 +2615,7 @@ func (h *Handler) codexUsageSnapshot() (codexUsagePayload, codexUsageSummaryResp
 		}
 	}
 	liveExtensions := buildCodexUsageExtensions(state.codexUsageByAuth, time.Now().UTC(), h.codexFreePlanWeight(), h.codexProPlanWeight(), h.codexUsageAuthBaseDir(), h.codexUsageAuthLookup(), selectedAuthID, observedAuthID, observedServiceTier, observedAt)
+	enrichCodexUsageExtensionsMeta(liveExtensions, compat)
 	compat.Extensions = cloneCodexUsageExtensions(liveExtensions)
 	summary.CompatPayload.Extensions = cloneCodexUsageExtensions(liveExtensions)
 	ensureCodexTotalUsageMultiplier(&compat, h.codexFreePlanWeight(), h.codexProPlanWeight())
@@ -2556,12 +2625,15 @@ func (h *Handler) codexUsageSnapshot() (codexUsagePayload, codexUsageSummaryResp
 
 func (h *Handler) GetCodexUsageCompat(c *gin.Context) {
 	if h == nil {
-		c.JSON(http.StatusOK, defaultCodexUsagePayload())
+		payload := defaultCodexUsagePayload()
+		applyCodexUsageRequestMetadata(c, &payload)
+		c.JSON(http.StatusOK, payload)
 		return
 	}
 	h.ensureUsageRuntimeInitialized()
 	h.refreshCodexUsageFromCacheTTL(c.Request.Context())
 	compat, _, _ := h.codexUsageSnapshot()
+	applyCodexUsageRequestMetadata(c, &compat)
 	c.JSON(http.StatusOK, compat)
 }
 
