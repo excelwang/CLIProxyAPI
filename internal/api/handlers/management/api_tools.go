@@ -209,6 +209,8 @@ func (h *Handler) APICall(c *gin.Context) {
 		return
 	}
 
+	h.reviveAuthFromOfficialUsage(c.Request.Context(), auth, parsedURL, resp.StatusCode, respBody)
+
 	c.JSON(http.StatusOK, apiCallResponse{
 		StatusCode: resp.StatusCode,
 		Header:     resp.Header,
@@ -611,6 +613,57 @@ func tokenValueFromMetadata(metadata map[string]any) string {
 		return strings.TrimSpace(v)
 	}
 	return ""
+}
+
+func (h *Handler) reviveAuthFromOfficialUsage(ctx context.Context, auth *coreauth.Auth, target *url.URL, statusCode int, body []byte) {
+	if h == nil || h.authManager == nil || auth == nil || target == nil {
+		return
+	}
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		return
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
+	switch provider {
+	case "codex":
+		h.reviveCodexAuthFromUsage(ctx, auth, target, body)
+	}
+}
+
+func (h *Handler) reviveCodexAuthFromUsage(ctx context.Context, auth *coreauth.Auth, target *url.URL, body []byte) {
+	if auth == nil || target == nil {
+		return
+	}
+	if !strings.HasSuffix(strings.TrimSpace(target.Path), "/wham/usage") {
+		return
+	}
+
+	var payload codexUsagePayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return
+	}
+	if !codexUsagePayloadAllowsScheduling(time.Now().UTC(), &payload) {
+		return
+	}
+	_, _ = h.authManager.ClearQuotaExhaustion(ctx, auth.ID)
+}
+
+func codexUsagePayloadAllowsScheduling(now time.Time, payload *codexUsagePayload) bool {
+	if payload == nil {
+		return false
+	}
+	normalized := normalizeCodexMainRateLimitWindows(payload.RateLimit)
+	normalized = codexRefreshRateLimitForNow(now, normalized)
+	if normalized == nil {
+		return false
+	}
+	if codexAnyBlockedWindow(normalized) {
+		return false
+	}
+	if codexIsWeeklyExhaustedRateLimit(normalized) {
+		return false
+	}
+	return normalized.Allowed || !normalized.LimitReached
 }
 
 func (h *Handler) authByIndex(authIndex string) *coreauth.Auth {
