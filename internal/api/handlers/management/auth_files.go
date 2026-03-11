@@ -928,20 +928,26 @@ func (h *Handler) disableAuth(ctx context.Context, id string) {
 	if id == "" {
 		return
 	}
-	if auth, ok := h.authManager.GetByID(id); ok && auth != nil {
-		if err := h.authManager.Remove(ctx, auth.ID); err == nil {
-			h.removeCodexUsageAuthState(auth.ID)
-		}
+	if auth, ok := h.authManager.GetByID(id); ok {
+		auth.Disabled = true
+		auth.Status = coreauth.StatusDisabled
+		auth.StatusMessage = "removed via management API"
+		auth.UpdatedAt = time.Now()
+		_, _ = h.authManager.Update(ctx, auth)
+		h.removeCodexUsageAuthState(auth.ID)
 		return
 	}
 	authID := h.authIDForPath(id)
 	if authID == "" {
 		return
 	}
-	if _, ok := h.authManager.GetByID(authID); ok {
-		if err := h.authManager.Remove(ctx, authID); err == nil {
-			h.removeCodexUsageAuthState(authID)
-		}
+	if auth, ok := h.authManager.GetByID(authID); ok {
+		auth.Disabled = true
+		auth.Status = coreauth.StatusDisabled
+		auth.StatusMessage = "removed via management API"
+		auth.UpdatedAt = time.Now()
+		_, _ = h.authManager.Update(ctx, auth)
+		h.removeCodexUsageAuthState(authID)
 	}
 }
 

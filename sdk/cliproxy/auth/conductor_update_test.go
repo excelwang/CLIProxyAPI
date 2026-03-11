@@ -49,7 +49,7 @@ func TestManager_Update_PreservesModelStates(t *testing.T) {
 	}
 }
 
-func TestManager_Remove_DropsStaleModelStatesForRecreatedAuth(t *testing.T) {
+func TestManager_Update_DoesNotPreserveModelStatesFromDisabledAuth(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	model := "test-model"
 
@@ -68,19 +68,23 @@ func TestManager_Remove_DropsStaleModelStatesForRecreatedAuth(t *testing.T) {
 		t.Fatalf("register auth: %v", errRegister)
 	}
 
-	if errRemove := m.Remove(context.Background(), "auth-1"); errRemove != nil {
-		t.Fatalf("remove auth: %v", errRemove)
-	}
-	if _, ok := m.GetByID("auth-1"); ok {
-		t.Fatal("expected auth to be removed")
+	if _, errUpdate := m.Update(context.Background(), &Auth{
+		ID:            "auth-1",
+		Provider:      "codex",
+		Metadata:      map[string]any{"type": "codex"},
+		Disabled:      true,
+		Status:        StatusDisabled,
+		StatusMessage: "removed via management API",
+	}); errUpdate != nil {
+		t.Fatalf("disable auth: %v", errUpdate)
 	}
 
-	if _, errRegister := m.Register(context.Background(), &Auth{
+	if _, errUpdate := m.Update(context.Background(), &Auth{
 		ID:       "auth-1",
 		Provider: "codex",
 		Metadata: map[string]any{"type": "codex"},
-	}); errRegister != nil {
-		t.Fatalf("re-register auth: %v", errRegister)
+	}); errUpdate != nil {
+		t.Fatalf("re-enable auth: %v", errUpdate)
 	}
 
 	updated, ok := m.GetByID("auth-1")
