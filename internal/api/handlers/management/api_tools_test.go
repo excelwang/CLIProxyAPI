@@ -9,51 +9,14 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 )
-
-type memoryAuthStore struct {
-	mu    sync.Mutex
-	items map[string]*coreauth.Auth
-}
-
-func (s *memoryAuthStore) List(ctx context.Context) ([]*coreauth.Auth, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]*coreauth.Auth, 0, len(s.items))
-	for _, a := range s.items {
-		out = append(out, a.Clone())
-	}
-	return out, nil
-}
-
-func (s *memoryAuthStore) Save(ctx context.Context, auth *coreauth.Auth) (string, error) {
-	_ = ctx
-	if auth == nil {
-		return "", nil
-	}
-	s.mu.Lock()
-	if s.items == nil {
-		s.items = make(map[string]*coreauth.Auth)
-	}
-	s.items[auth.ID] = auth.Clone()
-	s.mu.Unlock()
-	return auth.ID, nil
-}
-
-func (s *memoryAuthStore) Delete(ctx context.Context, id string) error {
-	_ = ctx
-	s.mu.Lock()
-	delete(s.items, id)
-	s.mu.Unlock()
-	return nil
-}
 
 func TestResolveTokenForAuth_Antigravity_RefreshesExpiredToken(t *testing.T) {
 	var callCount int
@@ -171,6 +134,54 @@ func TestResolveTokenForAuth_Antigravity_SkipsRefreshWhenTokenValid(t *testing.T
 	}
 	if callCount != 0 {
 		t.Fatalf("expected no refresh calls, got %d", callCount)
+	}
+}
+
+func TestAPICallTransportDirectBypassesGlobalProxy(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{
+		cfg: &config.Config{
+			SDKConfig: sdkconfig.SDKConfig{ProxyURL: "http://global-proxy.example.com:8080"},
+		},
+	}
+
+	transport := h.apiCallTransport(&coreauth.Auth{ProxyURL: "direct"})
+	httpTransport, ok := transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", transport)
+	}
+	if httpTransport.Proxy != nil {
+		t.Fatal("expected direct transport to disable proxy function")
+	}
+}
+
+func TestAPICallTransportInvalidAuthFallsBackToGlobalProxy(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{
+		cfg: &config.Config{
+			SDKConfig: sdkconfig.SDKConfig{ProxyURL: "http://global-proxy.example.com:8080"},
+		},
+	}
+
+	transport := h.apiCallTransport(&coreauth.Auth{ProxyURL: "bad-value"})
+	httpTransport, ok := transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", transport)
+	}
+
+	req, errRequest := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if errRequest != nil {
+		t.Fatalf("http.NewRequest returned error: %v", errRequest)
+	}
+
+	proxyURL, errProxy := httpTransport.Proxy(req)
+	if errProxy != nil {
+		t.Fatalf("httpTransport.Proxy returned error: %v", errProxy)
+	}
+	if proxyURL == nil || proxyURL.String() != "http://global-proxy.example.com:8080" {
+		t.Fatalf("proxy URL = %v, want http://global-proxy.example.com:8080", proxyURL)
 	}
 }
 
