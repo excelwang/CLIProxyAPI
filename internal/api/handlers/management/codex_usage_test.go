@@ -1091,6 +1091,32 @@ func TestObservedServiceTierCallback_RecordsServiceTierWithoutAuthID(t *testing.
 	}
 }
 
+
+func TestObservedServiceTierCallback_DoesNotClearObservedAuthIDOnEmptyFollowup(t *testing.T) {
+	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
+		codexUsageByAuth: make(map[string]codexAuthUsageStatus),
+		codexUsageCompat: defaultCodexUsagePayload(),
+	})
+
+	cb := h.ObservedServiceTierCallback()
+	if cb == nil {
+		t.Fatal("expected observed service tier callback")
+	}
+	cb("codex-auth-1", "priority")
+	cb("", "default")
+
+	authID, serviceTier, observedAt := h.observedCodexServiceTierSnapshot()
+	if authID != "codex-auth-1" {
+		t.Fatalf("expected observed auth id codex-auth-1, got %q", authID)
+	}
+	if serviceTier != "default" {
+		t.Fatalf("expected observed service tier default, got %q", serviceTier)
+	}
+	if observedAt.IsZero() {
+		t.Fatal("expected non-zero observed timestamp")
+	}
+}
+
 func TestGetCodexUsageCompatDefaultsToGuest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &Handler{}

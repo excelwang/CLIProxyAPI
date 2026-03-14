@@ -31,7 +31,9 @@ func (h *Handler) captureObservedServiceTier(authID string, serviceTier string) 
 	now := time.Now().UTC()
 
 	state.codexUsageMu.Lock()
-	state.codexObservedServiceTierAuthID = authID
+	if authID != "" || strings.TrimSpace(state.codexObservedServiceTierAuthID) == "" {
+		state.codexObservedServiceTierAuthID = authID
+	}
 	state.codexObservedServiceTier = serviceTier
 	state.codexObservedServiceTierAt = now
 	state.codexUsageMu.Unlock()
