@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
+	apihandlers "github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
 )
 
@@ -26,6 +27,7 @@ func registerCodexUsageRoutes(s *api.Server) {
 		base.SetSelectedAuthIDCallback(mgmt.SelectedAuthIDCallback())
 		base.SetObservedServiceTierCallback(mgmt.ObservedServiceTierCallback())
 	}
+	apihandlers.SetDefaultObservedServiceTierCallback(mgmt.ObservedServiceTierCallback())
 
 	authMiddleware := s.RequestAuthMiddleware()
 	engine.GET("/api/codex/usage", authMiddleware, mgmt.GetCodexUsageCompat)

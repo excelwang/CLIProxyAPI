@@ -57,6 +57,11 @@ type selectedAuthCallbackContextKey struct{}
 type observedServiceTierCallbackContextKey struct{}
 type executionSessionContextKey struct{}
 
+var (
+	defaultObservedServiceTierCallbackMu sync.RWMutex
+	defaultObservedServiceTierCallback   func(string, string)
+)
+
 // WithPinnedAuthID returns a child context that requests execution on a specific auth ID.
 func WithPinnedAuthID(ctx context.Context, authID string) context.Context {
 	authID = strings.TrimSpace(authID)
@@ -260,9 +265,27 @@ func observedServiceTierCallbackFromContext(ctx context.Context) func(string, st
 	return nil
 }
 
+// SetDefaultObservedServiceTierCallback registers a process-wide fallback callback
+// used when a request context does not carry the observed service tier callback.
+func SetDefaultObservedServiceTierCallback(callback func(string, string)) {
+	defaultObservedServiceTierCallbackMu.Lock()
+	defer defaultObservedServiceTierCallbackMu.Unlock()
+	defaultObservedServiceTierCallback = callback
+}
+
+func defaultObservedServiceTierCallbackSnapshot() func(string, string) {
+	defaultObservedServiceTierCallbackMu.RLock()
+	defer defaultObservedServiceTierCallbackMu.RUnlock()
+	return defaultObservedServiceTierCallback
+}
+
 // ReportObservedServiceTier notifies any registered callback of the upstream-confirmed service tier.
 func ReportObservedServiceTier(ctx context.Context, authID string, serviceTier string) {
 	if callback := observedServiceTierCallbackFromContext(ctx); callback != nil {
+		callback(authID, serviceTier)
+		return
+	}
+	if callback := defaultObservedServiceTierCallbackSnapshot(); callback != nil {
 		callback(authID, serviceTier)
 	}
 }
