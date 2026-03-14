@@ -1117,6 +1117,23 @@ func TestObservedServiceTierCallback_DoesNotClearObservedAuthIDOnEmptyFollowup(t
 	}
 }
 
+func TestBuildCodexUsageSelectedAuthExtension_FallsBackToSelectedAuthWhenObservedAuthMissing(t *testing.T) {
+	observedAt := time.Now().UTC()
+	ext := buildCodexUsageSelectedAuthExtension("codex-auth-1", "", "default", observedAt)
+	if ext == nil {
+		t.Fatal("expected selected auth extension")
+	}
+	if ext.AuthID != "codex-auth-1" {
+		t.Fatalf("expected auth id codex-auth-1, got %q", ext.AuthID)
+	}
+	if ext.ServiceTier != "default" {
+		t.Fatalf("expected service tier default, got %q", ext.ServiceTier)
+	}
+	if ext.ObservedAt == nil || ext.ObservedAt.IsZero() {
+		t.Fatal("expected observed timestamp")
+	}
+}
+
 func TestGetCodexUsageCompatDefaultsToGuest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &Handler{}

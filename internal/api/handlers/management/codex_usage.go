@@ -724,6 +724,9 @@ func buildCodexUsageSelectedAuthExtension(selectedAuthID, observedAuthID, observ
 	if selectedAuthID == "" {
 		selectedAuthID = observedAuthID
 	}
+	if observedAuthID == "" {
+		observedAuthID = selectedAuthID
+	}
 	if selectedAuthID == "" || observedAuthID == "" || selectedAuthID != observedAuthID {
 		return nil
 	}
