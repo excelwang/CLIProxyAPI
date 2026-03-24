@@ -27,7 +27,7 @@ const (
 	codexFreePlanWeight      = 0.2
 	codexFiveHourWindowSecs  = 5 * 60 * 60
 	codexWeeklyWindowSecs    = 7 * 24 * 60 * 60
-	// OpenAI official Codex Pricing indicates Pro usage is 6x Plus usage.
+	// Pro accounts are weighted as 6x in aggregate usage capacity.
 	// Keep this as default unless overridden by config.
 	codexProPlanWeight      = 6.0
 	codexUsageStateFileName = ".codex-usage-cache.json"
@@ -1666,7 +1666,7 @@ func codexPlanWeight(planType string, freePlanWeight, proPlanWeight float64) flo
 			return freePlanWeight
 		}
 		return codexFreePlanWeight
-	case "pro", "plus", "business", "team", "enterprise":
+	case "pro":
 		if proPlanWeight > 0 {
 			return proPlanWeight
 		}
@@ -1690,7 +1690,7 @@ func inferCodexTotalUsageMultiplier(planType string, freePlanWeight, proPlanWeig
 			return freePlanWeight
 		}
 		return codexFreePlanWeight
-	case "pro", "plus", "business", "team", "enterprise":
+	case "pro":
 		if proPlanWeight > 0 {
 			return proPlanWeight
 		}
