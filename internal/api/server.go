@@ -263,6 +263,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	// Initialize management handler
 	s.mgmt = managementHandlers.NewHandler(cfg, configFilePath, authManager)
+	if authManager != nil {
+		authManager.SetWeeklyQuotaProvider(s.mgmt)
+	}
 	if optionState.localPassword != "" {
 		s.mgmt.SetLocalPassword(optionState.localPassword)
 	}
@@ -358,6 +361,8 @@ func (s *Server) setupRoutes() {
 			},
 		})
 	})
+	s.engine.GET("/api/codex/usage", AuthMiddleware(s.accessManager), s.mgmt.GetCodexUsageCompat)
+	s.engine.GET("/wham/usage", AuthMiddleware(s.accessManager), s.mgmt.GetCodexUsageCompat)
 	s.engine.POST("/v1internal:method", geminiCLIHandlers.CLIHandler)
 
 	// OAuth callback endpoints (reuse main server port)
@@ -489,6 +494,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/usage", s.mgmt.GetUsageStatistics)
 		mgmt.GET("/usage/export", s.mgmt.ExportUsageStatistics)
 		mgmt.POST("/usage/import", s.mgmt.ImportUsageStatistics)
+		mgmt.GET("/codex-usage-summary", s.mgmt.GetCodexUsageSummary)
 		mgmt.GET("/config", s.mgmt.GetConfig)
 		mgmt.GET("/config.yaml", s.mgmt.GetConfigYAML)
 		mgmt.PUT("/config.yaml", s.mgmt.PutConfigYAML)
@@ -970,6 +976,9 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	if s.mgmt != nil {
 		s.mgmt.SetConfig(cfg)
 		s.mgmt.SetAuthManager(s.handlers.AuthManager)
+		if s.handlers != nil && s.handlers.AuthManager != nil {
+			s.handlers.AuthManager.SetWeeklyQuotaProvider(s.mgmt)
+		}
 	}
 
 	// Notify Amp module only when Amp config has changed.

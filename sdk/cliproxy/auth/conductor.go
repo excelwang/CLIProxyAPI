@@ -135,6 +135,8 @@ type Manager struct {
 	mu        sync.RWMutex
 	auths     map[string]*Auth
 	scheduler *authScheduler
+	// selectedAuthByProvider stores the last auth ID selected by scheduler per provider.
+	selectedAuthByProvider map[string]string
 	// providerOffsets tracks per-model provider rotation state for multi-provider routing.
 	providerOffsets map[string]int
 
@@ -174,14 +176,15 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		hook = NoopHook{}
 	}
 	manager := &Manager{
-		store:            store,
-		executors:        make(map[string]ProviderExecutor),
-		selector:         selector,
-		hook:             hook,
-		auths:            make(map[string]*Auth),
-		providerOffsets:  make(map[string]int),
-		modelPoolOffsets: make(map[string]int),
-		refreshSemaphore: make(chan struct{}, refreshMaxConcurrency),
+		store:                  store,
+		executors:              make(map[string]ProviderExecutor),
+		selector:               selector,
+		hook:                   hook,
+		auths:                  make(map[string]*Auth),
+		selectedAuthByProvider: make(map[string]string),
+		providerOffsets:        make(map[string]int),
+		modelPoolOffsets:       make(map[string]int),
+		refreshSemaphore:       make(chan struct{}, refreshMaxConcurrency),
 	}
 	// atomic.Value requires non-nil initial value.
 	manager.runtimeConfig.Store(&internalconfig.Config{})
@@ -192,7 +195,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 
 func isBuiltInSelector(selector Selector) bool {
 	switch selector.(type) {
-	case *RoundRobinSelector, *FillFirstSelector:
+	case *RoundRobinSelector, *FillFirstSelector, *SmartWeeklySelector:
 		return true
 	default:
 		return false
@@ -249,6 +252,74 @@ func (m *Manager) SetSelector(selector Selector) {
 	}
 }
 
+// SelectedAuthID returns the last scheduler-selected auth ID for the given provider.
+func (m *Manager) SelectedAuthID(provider string) string {
+	if m == nil {
+		return ""
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return strings.TrimSpace(m.selectedAuthByProvider[provider])
+}
+
+// SetSelectedAuthID updates the last scheduler-selected auth ID for a provider.
+func (m *Manager) SetSelectedAuthID(provider, authID string) {
+	m.setSelectedAuthID(provider, authID)
+}
+
+func (m *Manager) setSelectedAuthID(provider, authID string) {
+	if m == nil {
+		return
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return
+	}
+	authID = strings.TrimSpace(authID)
+	m.mu.Lock()
+	if m.selectedAuthByProvider == nil {
+		m.selectedAuthByProvider = make(map[string]string)
+	}
+	if authID == "" {
+		delete(m.selectedAuthByProvider, provider)
+	} else {
+		m.selectedAuthByProvider[provider] = authID
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) clearSelectedAuthIDLocked(authID string) {
+	authID = strings.TrimSpace(authID)
+	if authID == "" || len(m.selectedAuthByProvider) == 0 {
+		return
+	}
+	for provider, selected := range m.selectedAuthByProvider {
+		if strings.TrimSpace(selected) == authID {
+			delete(m.selectedAuthByProvider, provider)
+		}
+	}
+}
+
+// SetWeeklyQuotaProvider installs the weekly quota snapshot provider used by smart weekly routing.
+func (m *Manager) SetWeeklyQuotaProvider(provider WeeklyQuotaProvider) {
+	if m == nil || m.scheduler == nil {
+		return
+	}
+	m.scheduler.setWeeklyQuotaProvider(provider)
+}
+
+// SetSmartWeeklyConfig updates the smart weekly scheduler configuration.
+func (m *Manager) SetSmartWeeklyConfig(settings SmartWeeklySettings) {
+	if m == nil || m.scheduler == nil {
+		return
+	}
+	m.scheduler.setSmartWeeklySettings(settings)
+}
+
 // SetStore swaps the underlying persistence store.
 func (m *Manager) SetStore(store Store) {
 	m.mu.Lock()
@@ -274,6 +345,29 @@ func (m *Manager) SetConfig(cfg *internalconfig.Config) {
 	}
 	m.runtimeConfig.Store(cfg)
 	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
+	m.SetSmartWeeklyConfig(smartWeeklySettingsFromConfig(cfg))
+}
+
+func smartWeeklySettingsFromConfig(cfg *internalconfig.Config) SmartWeeklySettings {
+	settings := SmartWeeklySettings{
+		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
+		WarmupDelay:                defaultSmartWeeklyWarmupDelay,
+	}
+	if cfg == nil {
+		return settings
+	}
+	if raw := cfg.Routing.SmartWeekly.ProtectionThresholdPercent; raw != nil {
+		settings.ProtectionThresholdPercent = *raw
+	}
+	if raw := strings.TrimSpace(cfg.Routing.SmartWeekly.WarmupDelay); raw != "" {
+		delay, errParse := time.ParseDuration(raw)
+		if errParse != nil {
+			log.WithError(errParse).Debugf("invalid smart-weekly warmup delay %q, keeping %s", raw, settings.WarmupDelay)
+		} else {
+			settings.WarmupDelay = delay
+		}
+	}
+	return settings
 }
 
 func (m *Manager) lookupAPIKeyUpstreamModel(authID, requestedModel string) string {
@@ -839,6 +933,9 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	auth.EnsureIndex()
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
+	if auth.Disabled || auth.Status == StatusDisabled {
+		m.clearSelectedAuthIDLocked(auth.ID)
+	}
 	m.mu.Unlock()
 	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
 	if m.scheduler != nil {
@@ -998,6 +1095,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		entry := logEntryWithRequestID(ctx)
 		debugLogAuthSelection(entry, auth, provider, req.Model)
 		publishSelectedAuthMetadata(opts.Metadata, auth.ID)
+		m.setSelectedAuthID(provider, auth.ID)
 
 		tried[auth.ID] = struct{}{}
 		execCtx := ctx
@@ -1070,6 +1168,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		entry := logEntryWithRequestID(ctx)
 		debugLogAuthSelection(entry, auth, provider, req.Model)
 		publishSelectedAuthMetadata(opts.Metadata, auth.ID)
+		m.setSelectedAuthID(provider, auth.ID)
 
 		tried[auth.ID] = struct{}{}
 		execCtx := ctx
@@ -1142,6 +1241,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		entry := logEntryWithRequestID(ctx)
 		debugLogAuthSelection(entry, auth, provider, req.Model)
 		publishSelectedAuthMetadata(opts.Metadata, auth.ID)
+		m.setSelectedAuthID(provider, auth.ID)
 
 		tried[auth.ID] = struct{}{}
 		execCtx := ctx

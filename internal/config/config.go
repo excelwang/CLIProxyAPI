@@ -189,8 +189,21 @@ type QuotaExceeded struct {
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "fill-first".
+	// Supported values: "round-robin" (default), "fill-first", "smart-weekly".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// SmartWeekly configures the smart weekly routing strategy.
+	SmartWeekly RoutingSmartWeeklyConfig `yaml:"smart-weekly,omitempty" json:"smart-weekly,omitempty"`
+}
+
+// RoutingSmartWeeklyConfig configures smart weekly routing behavior.
+type RoutingSmartWeeklyConfig struct {
+	// ProtectionThresholdPercent protects auths at or below this weekly remaining percentage
+	// until every weekly-quota auth is at or below the same threshold.
+	ProtectionThresholdPercent *float64 `yaml:"protection-threshold-percent,omitempty" json:"protection-threshold-percent,omitempty"`
+
+	// WarmupDelay waits this long after a new weekly reset is observed before one warmup selection is allowed.
+	WarmupDelay string `yaml:"warmup-delay,omitempty" json:"warmup-delay,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.

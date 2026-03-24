@@ -631,6 +631,8 @@ func (s *Service) Run(ctx context.Context) error {
 			switch strategy {
 			case "fill-first", "fillfirst", "ff":
 				return "fill-first"
+			case "smart-weekly", "smartweekly", "smart_weekly", "sw":
+				return "smart-weekly"
 			default:
 				return "round-robin"
 			}
@@ -642,6 +644,8 @@ func (s *Service) Run(ctx context.Context) error {
 			switch nextStrategy {
 			case "fill-first":
 				selector = &coreauth.FillFirstSelector{}
+			case "smart-weekly":
+				selector = &coreauth.SmartWeeklySelector{}
 			default:
 				selector = &coreauth.RoundRobinSelector{}
 			}

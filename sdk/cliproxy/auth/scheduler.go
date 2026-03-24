@@ -18,6 +18,7 @@ const (
 	schedulerStrategyCustom schedulerStrategy = iota
 	schedulerStrategyRoundRobin
 	schedulerStrategyFillFirst
+	schedulerStrategySmartWeekly
 )
 
 // scheduledState describes how an auth currently participates in a model shard.
@@ -32,11 +33,14 @@ const (
 
 // authScheduler keeps the incremental provider/model scheduling state used by Manager.
 type authScheduler struct {
-	mu            sync.Mutex
-	strategy      schedulerStrategy
-	providers     map[string]*providerScheduler
-	authProviders map[string]string
-	mixedCursors  map[string]int
+	mu                  sync.Mutex
+	strategy            schedulerStrategy
+	providers           map[string]*providerScheduler
+	authProviders       map[string]string
+	mixedCursors        map[string]int
+	weeklyQuotaProvider WeeklyQuotaProvider
+	smartWeekly         smartWeeklyConfig
+	weeklyWarmups       map[string]*weeklyWarmupState
 }
 
 // providerScheduler stores auth metadata and model shards for a single provider.
@@ -104,6 +108,8 @@ func newAuthScheduler(selector Selector) *authScheduler {
 		providers:     make(map[string]*providerScheduler),
 		authProviders: make(map[string]string),
 		mixedCursors:  make(map[string]int),
+		smartWeekly:   defaultSmartWeeklyConfig(),
+		weeklyWarmups: make(map[string]*weeklyWarmupState),
 	}
 }
 
@@ -112,6 +118,8 @@ func selectorStrategy(selector Selector) schedulerStrategy {
 	switch selector.(type) {
 	case *FillFirstSelector:
 		return schedulerStrategyFillFirst
+	case *SmartWeeklySelector:
+		return schedulerStrategySmartWeekly
 	case nil, *RoundRobinSelector:
 		return schedulerStrategyRoundRobin
 	default:
@@ -204,6 +212,11 @@ func (s *authScheduler) pickSingle(ctx context.Context, provider, model string, 
 		}
 		return true
 	}
+	if s.strategy == schedulerStrategySmartWeekly {
+		if picked := s.pickSingleSmartWeeklyLocked(ctx, providerKey, shard, preferWebsocket, predicate); picked != nil {
+			return picked, nil
+		}
+	}
 	if picked := shard.pickReadyLocked(preferWebsocket, s.strategy, predicate); picked != nil {
 		return picked, nil
 	}
@@ -290,6 +303,12 @@ func (s *authScheduler) pickMixed(ctx context.Context, providers []string, model
 			}
 		}
 		return nil, "", s.mixedUnavailableErrorLocked(normalized, model, tried)
+	}
+
+	if s.strategy == schedulerStrategySmartWeekly {
+		if picked, providerKey := s.pickMixedSmartWeeklyLocked(ctx, normalized, candidateShards, modelKey, predicate); picked != nil {
+			return picked, providerKey, nil
+		}
 	}
 
 	cursorKey := strings.Join(normalized, ",") + ":" + modelKey
@@ -423,6 +442,7 @@ func (s *authScheduler) removeAuthLocked(authID string) {
 		}
 		delete(s.authProviders, authID)
 	}
+	delete(s.weeklyWarmups, authID)
 }
 
 // ensureProviderLocked returns the provider scheduler for providerKey, creating it when needed.
