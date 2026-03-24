@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 const (
 	defaultSmartWeeklyProtectionThresholdPercent = 5.0
 	defaultSmartWeeklyWarmupDelay                = 5 * time.Minute
+	defaultSmartWeeklyMaxAuthCount               = 5
 )
 
 // SmartWeeklySelector enables scheduler-backed weekly-aware routing.
@@ -29,6 +31,7 @@ func (s *SmartWeeklySelector) Pick(ctx context.Context, provider, model string, 
 type SmartWeeklySettings struct {
 	ProtectionThresholdPercent float64
 	WarmupDelay                time.Duration
+	MaxAuthCount               int
 }
 
 // WeeklyQuotaSnapshot is the normalized weekly quota state for one auth.
@@ -47,6 +50,7 @@ type WeeklyQuotaProvider interface {
 type smartWeeklyConfig struct {
 	protectionThresholdRatio float64
 	warmupDelay              time.Duration
+	maxAuthCount             int
 }
 
 type weeklyWarmupState struct {
@@ -72,6 +76,7 @@ func defaultSmartWeeklyConfig() smartWeeklyConfig {
 	return normalizeSmartWeeklySettings(SmartWeeklySettings{
 		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
 		WarmupDelay:                defaultSmartWeeklyWarmupDelay,
+		MaxAuthCount:               defaultSmartWeeklyMaxAuthCount,
 	})
 }
 
@@ -91,9 +96,15 @@ func normalizeSmartWeeklySettings(settings SmartWeeklySettings) smartWeeklyConfi
 		delay = 0
 	}
 
+	maxAuthCount := settings.MaxAuthCount
+	if maxAuthCount < 0 {
+		maxAuthCount = 0
+	}
+
 	return smartWeeklyConfig{
 		protectionThresholdRatio: threshold / 100,
 		warmupDelay:              delay,
+		maxAuthCount:             maxAuthCount,
 	}
 }
 
@@ -322,24 +333,8 @@ func (s *authScheduler) pickSmartWeeklyRankedLocked(ctx context.Context, sources
 		}
 	}
 
-	topSet := make(map[string]struct{})
-	best := smartWeeklyCandidate{}
-	found := false
-	for _, candidate := range candidates {
-		if hasUnprotected && candidate.remainingRatio <= threshold {
-			continue
-		}
-		switch {
-		case !found || candidate.resetAt.Before(best.resetAt) || (candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio > best.remainingRatio):
-			best = candidate
-			found = true
-			clear(topSet)
-			topSet[candidate.authID] = struct{}{}
-		case candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio == best.remainingRatio:
-			topSet[candidate.authID] = struct{}{}
-		}
-	}
-	if !found || len(topSet) == 0 {
+	topSet := s.buildSmartWeeklyTopSetLocked(candidates, hasUnprotected, threshold)
+	if len(topSet) == 0 {
 		return nil, "", true
 	}
 
@@ -348,6 +343,70 @@ func (s *authScheduler) pickSmartWeeklyRankedLocked(ctx context.Context, sources
 		return nil, "", true
 	}
 	return picked, providerKey, true
+}
+
+func (s *authScheduler) buildSmartWeeklyTopSetLocked(candidates []smartWeeklyCandidate, hasUnprotected bool, threshold float64) map[string]struct{} {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	filtered := make([]smartWeeklyCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if hasUnprotected && candidate.remainingRatio <= threshold {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	if s == nil || s.smartWeekly.maxAuthCount <= 0 {
+		topSet := make(map[string]struct{})
+		best := smartWeeklyCandidate{}
+		found := false
+		for _, candidate := range filtered {
+			switch {
+			case !found || candidate.resetAt.Before(best.resetAt) || (candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio > best.remainingRatio):
+				best = candidate
+				found = true
+				clear(topSet)
+				topSet[candidate.authID] = struct{}{}
+			case candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio == best.remainingRatio:
+				topSet[candidate.authID] = struct{}{}
+			}
+		}
+		return topSet
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if !filtered[i].resetAt.Equal(filtered[j].resetAt) {
+			return filtered[i].resetAt.Before(filtered[j].resetAt)
+		}
+		if filtered[i].remainingRatio != filtered[j].remainingRatio {
+			return filtered[i].remainingRatio > filtered[j].remainingRatio
+		}
+		return filtered[i].authID < filtered[j].authID
+	})
+
+	topSet := make(map[string]struct{}, minInt(s.smartWeekly.maxAuthCount, len(filtered)))
+	for _, candidate := range filtered {
+		if _, ok := topSet[candidate.authID]; ok {
+			continue
+		}
+		topSet[candidate.authID] = struct{}{}
+		if len(topSet) >= s.smartWeekly.maxAuthCount {
+			break
+		}
+	}
+	return topSet
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (s *authScheduler) pickFromTopSetLocked(sources []schedulerReadySource, topSet map[string]struct{}, cursorKey string) (*scheduledAuth, string) {

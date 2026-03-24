@@ -204,6 +204,10 @@ type RoutingSmartWeeklyConfig struct {
 
 	// WarmupDelay waits this long after a new weekly reset is observed before one warmup selection is allowed.
 	WarmupDelay string `yaml:"warmup-delay,omitempty" json:"warmup-delay,omitempty"`
+
+	// MaxAuthCnt limits how many top-ranked weekly-quota auths can participate in the current round-robin pool.
+	// When omitted, smart-weekly defaults to 5; values <= 0 preserve the legacy best-ranked behavior.
+	MaxAuthCnt *int `yaml:"max-auth-cnt,omitempty" json:"max-auth-cnt,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.

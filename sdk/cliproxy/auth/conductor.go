@@ -352,12 +352,16 @@ func smartWeeklySettingsFromConfig(cfg *internalconfig.Config) SmartWeeklySettin
 	settings := SmartWeeklySettings{
 		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
 		WarmupDelay:                defaultSmartWeeklyWarmupDelay,
+		MaxAuthCount:               defaultSmartWeeklyMaxAuthCount,
 	}
 	if cfg == nil {
 		return settings
 	}
 	if raw := cfg.Routing.SmartWeekly.ProtectionThresholdPercent; raw != nil {
 		settings.ProtectionThresholdPercent = *raw
+	}
+	if raw := cfg.Routing.SmartWeekly.MaxAuthCnt; raw != nil {
+		settings.MaxAuthCount = *raw
 	}
 	if raw := strings.TrimSpace(cfg.Routing.SmartWeekly.WarmupDelay); raw != "" {
 		delay, errParse := time.ParseDuration(raw)
