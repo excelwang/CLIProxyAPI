@@ -118,7 +118,7 @@ func TestSmartWeeklyUsesProtectedPoolWhenNecessary(t *testing.T) {
 	scheduler.setSmartWeeklySettings(SmartWeeklySettings{
 		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
 		WarmupDelay:                defaultSmartWeeklyWarmupDelay,
-		MaxAuthCount:               0,
+		MaxAuthCount:               -1,
 	})
 	scheduler.setWeeklyQuotaProvider(&stubWeeklyQuotaProvider{
 		snapshots: map[string]WeeklyQuotaSnapshot{
@@ -277,7 +277,68 @@ func TestSmartWeeklyMaxAuthCountCapsRotationPool(t *testing.T) {
 	}
 }
 
-func TestSmartWeeklyZeroMaxAuthCountKeepsLegacyBestRankedBehavior(t *testing.T) {
+func TestSmartWeeklyZeroMaxAuthCountRotatesAllRankedAuths(t *testing.T) {
+	t.Parallel()
+
+	model := "gpt-5-codex"
+	first := newSmartWeeklyTestAuth("smart-weekly-zero-first", 0)
+	second := newSmartWeeklyTestAuth("smart-weekly-zero-second", 0)
+	third := newSmartWeeklyTestAuth("smart-weekly-zero-third", 0)
+	registerSmartWeeklyTestModel(t, first.ID, model)
+	registerSmartWeeklyTestModel(t, second.ID, model)
+	registerSmartWeeklyTestModel(t, third.ID, model)
+
+	now := time.Now().UTC()
+	scheduler := newAuthScheduler(&SmartWeeklySelector{})
+	scheduler.setSmartWeeklySettings(SmartWeeklySettings{
+		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
+		WarmupDelay:                defaultSmartWeeklyWarmupDelay,
+		MaxAuthCount:               0,
+	})
+	scheduler.setWeeklyQuotaProvider(&stubWeeklyQuotaProvider{
+		snapshots: map[string]WeeklyQuotaSnapshot{
+			first.ID: {
+				AuthID:         first.ID,
+				RemainingRatio: 0.60,
+				ResetAt:        now.Add(20 * time.Minute),
+				ObservedAt:     now,
+			},
+			second.ID: {
+				AuthID:         second.ID,
+				RemainingRatio: 0.95,
+				ResetAt:        now.Add(3 * time.Hour),
+				ObservedAt:     now,
+			},
+			third.ID: {
+				AuthID:         third.ID,
+				RemainingRatio: 0.75,
+				ResetAt:        now.Add(90 * time.Minute),
+				ObservedAt:     now,
+			},
+		},
+	})
+	scheduler.upsertAuth(first)
+	scheduler.upsertAuth(second)
+	scheduler.upsertAuth(third)
+
+	seen := make(map[string]int)
+	for i := 0; i < 9; i++ {
+		picked, errPick := scheduler.pickSingle(context.Background(), "codex", model, cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickSingle returned error: %v", errPick)
+		}
+		if picked == nil {
+			t.Fatal("pickSingle returned nil auth")
+		}
+		seen[picked.ID]++
+	}
+
+	if seen[first.ID] == 0 || seen[second.ID] == 0 || seen[third.ID] == 0 {
+		t.Fatalf("expected all ranked auths to participate when max-auth-cnt=0, got counts first=%d second=%d third=%d", seen[first.ID], seen[second.ID], seen[third.ID])
+	}
+}
+
+func TestSmartWeeklyNegativeMaxAuthCountKeepsLegacyBestRankedBehavior(t *testing.T) {
 	t.Parallel()
 
 	model := "gpt-5-codex"
@@ -291,7 +352,7 @@ func TestSmartWeeklyZeroMaxAuthCountKeepsLegacyBestRankedBehavior(t *testing.T) 
 	scheduler.setSmartWeeklySettings(SmartWeeklySettings{
 		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
 		WarmupDelay:                defaultSmartWeeklyWarmupDelay,
-		MaxAuthCount:               0,
+		MaxAuthCount:               -1,
 	})
 	scheduler.setWeeklyQuotaProvider(&stubWeeklyQuotaProvider{
 		snapshots: map[string]WeeklyQuotaSnapshot{

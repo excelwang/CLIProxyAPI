@@ -94,7 +94,7 @@ routing:
   smart-weekly:
     protection-threshold-percent: 5 # protect auths at or below this weekly remaining percentage until every weekly-quota auth is at/below it
     warmup-delay: "5m" # after a new weekly reset is observed, allow one warmup selection after this delay
-    max-auth-cnt: 5 # default 5; set <= 0 to keep legacy best-ranked behavior, or raise it to widen the round-robin pool
+    max-auth-cnt: 5 # default 5; set 0 to rotate all eligible auths at the active priority, or set < 0 to keep legacy best-ranked behavior
 
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: false

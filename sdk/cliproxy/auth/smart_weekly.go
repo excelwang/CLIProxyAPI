@@ -97,9 +97,6 @@ func normalizeSmartWeeklySettings(settings SmartWeeklySettings) smartWeeklyConfi
 	}
 
 	maxAuthCount := settings.MaxAuthCount
-	if maxAuthCount < 0 {
-		maxAuthCount = 0
-	}
 
 	return smartWeeklyConfig{
 		protectionThresholdRatio: threshold / 100,
@@ -361,20 +358,14 @@ func (s *authScheduler) buildSmartWeeklyTopSetLocked(candidates []smartWeeklyCan
 		return nil
 	}
 
-	if s == nil || s.smartWeekly.maxAuthCount <= 0 {
-		topSet := make(map[string]struct{})
-		best := smartWeeklyCandidate{}
-		found := false
+	if s == nil || s.smartWeekly.maxAuthCount < 0 {
+		return buildSmartWeeklyBestRankedSet(filtered)
+	}
+
+	if s.smartWeekly.maxAuthCount == 0 {
+		topSet := make(map[string]struct{}, len(filtered))
 		for _, candidate := range filtered {
-			switch {
-			case !found || candidate.resetAt.Before(best.resetAt) || (candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio > best.remainingRatio):
-				best = candidate
-				found = true
-				clear(topSet)
-				topSet[candidate.authID] = struct{}{}
-			case candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio == best.remainingRatio:
-				topSet[candidate.authID] = struct{}{}
-			}
+			topSet[candidate.authID] = struct{}{}
 		}
 		return topSet
 	}
@@ -397,6 +388,24 @@ func (s *authScheduler) buildSmartWeeklyTopSetLocked(candidates []smartWeeklyCan
 		topSet[candidate.authID] = struct{}{}
 		if len(topSet) >= s.smartWeekly.maxAuthCount {
 			break
+		}
+	}
+	return topSet
+}
+
+func buildSmartWeeklyBestRankedSet(candidates []smartWeeklyCandidate) map[string]struct{} {
+	topSet := make(map[string]struct{})
+	best := smartWeeklyCandidate{}
+	found := false
+	for _, candidate := range candidates {
+		switch {
+		case !found || candidate.resetAt.Before(best.resetAt) || (candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio > best.remainingRatio):
+			best = candidate
+			found = true
+			clear(topSet)
+			topSet[candidate.authID] = struct{}{}
+		case candidate.resetAt.Equal(best.resetAt) && candidate.remainingRatio == best.remainingRatio:
+			topSet[candidate.authID] = struct{}{}
 		}
 	}
 	return topSet
