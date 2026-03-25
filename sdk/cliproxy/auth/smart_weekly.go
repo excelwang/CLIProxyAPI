@@ -567,6 +567,19 @@ func (s *authScheduler) observeWarmupLocked(snapshot WeeklyQuotaSnapshot, now ti
 	resetAt := snapshot.ResetAt.UTC()
 	if state.lastSeenResetAt.IsZero() {
 		state.lastSeenResetAt = resetAt
+		observedAt := snapshot.ObservedAt.UTC()
+		if observedAt.IsZero() {
+			return state
+		}
+		// Allow one delayed warmup for newly observed auths, but avoid backfilling
+		// stale snapshots that predate the current scheduler process by longer than
+		// the configured warmup window.
+		if s.smartWeekly.warmupDelay > 0 && observedAt.Before(now.Add(-s.smartWeekly.warmupDelay)) {
+			return state
+		}
+		state.warmupResetAt = resetAt
+		state.warmupDueAt = observedAt.Add(s.smartWeekly.warmupDelay)
+		state.warmupConsumed = false
 		return state
 	}
 	switch {

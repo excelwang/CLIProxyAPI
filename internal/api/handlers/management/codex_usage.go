@@ -1789,6 +1789,13 @@ func inferCodexPlanType(auth *coreauth.Auth, status codexAuthUsageStatus) string
 	if auth == nil {
 		return "guest"
 	}
+	if auth.Attributes != nil {
+		for _, key := range []string{"plan_type", "planType"} {
+			if planType := strings.TrimSpace(auth.Attributes[key]); planType != "" {
+				return planType
+			}
+		}
+	}
 	if auth.Metadata != nil {
 		for _, key := range []string{"plan_type", "planType"} {
 			if value, ok := auth.Metadata[key]; ok {
@@ -1807,8 +1814,12 @@ func inferCodexPlanType(auth *coreauth.Auth, status codexAuthUsageStatus) string
 		return "free"
 	case strings.Contains(name, "-pro"), strings.Contains(name, "-plus"):
 		return "pro"
+	case strings.Contains(name, "-team"):
+		return "team"
 	case strings.Contains(name, "-business"):
 		return "business"
+	case strings.Contains(name, "-enterprise"):
+		return "enterprise"
 	default:
 		return "guest"
 	}

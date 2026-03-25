@@ -213,6 +213,58 @@ func TestSmartWeeklyWarmupOverridesPriorityOnce(t *testing.T) {
 	}
 }
 
+func TestSmartWeeklyFirstSeenWarmupAfterDelay(t *testing.T) {
+	t.Parallel()
+
+	model := "gpt-5-codex"
+	high := newSmartWeeklyTestAuth("smart-weekly-first-seen-high", 10)
+	low := newSmartWeeklyTestAuth("smart-weekly-first-seen-low", 1)
+	registerSmartWeeklyTestModel(t, high.ID, model)
+	registerSmartWeeklyTestModel(t, low.ID, model)
+
+	now := time.Now().UTC()
+	scheduler := newAuthScheduler(&SmartWeeklySelector{})
+	scheduler.setSmartWeeklySettings(SmartWeeklySettings{
+		ProtectionThresholdPercent: defaultSmartWeeklyProtectionThresholdPercent,
+		WarmupDelay:                0,
+		MaxAuthCount:               defaultSmartWeeklyMaxAuthCount,
+	})
+	scheduler.setWeeklyQuotaProvider(&stubWeeklyQuotaProvider{
+		snapshots: map[string]WeeklyQuotaSnapshot{
+			high.ID: {
+				AuthID:         high.ID,
+				RemainingRatio: 0.60,
+				ResetAt:        now.Add(2 * time.Hour),
+				ObservedAt:     now,
+			},
+			low.ID: {
+				AuthID:         low.ID,
+				RemainingRatio: 0.95,
+				ResetAt:        now.Add(30 * time.Minute),
+				ObservedAt:     now,
+			},
+		},
+	})
+	scheduler.upsertAuth(high)
+	scheduler.upsertAuth(low)
+
+	first, errPick := scheduler.pickSingle(context.Background(), "codex", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("first pickSingle returned error: %v", errPick)
+	}
+	if first == nil || first.ID != low.ID {
+		t.Fatalf("first picked auth = %v, want %s", first, low.ID)
+	}
+
+	second, errPick := scheduler.pickSingle(context.Background(), "codex", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("second pickSingle returned error: %v", errPick)
+	}
+	if second == nil || second.ID != high.ID {
+		t.Fatalf("second picked auth = %v, want %s", second, high.ID)
+	}
+}
+
 func TestSmartWeeklyMaxAuthCountCapsRotationPool(t *testing.T) {
 	t.Parallel()
 

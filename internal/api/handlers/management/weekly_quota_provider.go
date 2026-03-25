@@ -8,13 +8,15 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
+const codexWeeklyQuotaBootstrapPollLimit = 5
+
 func (h *Handler) WeeklyQuotaSnapshots(ctx context.Context, authIDs []string) map[string]coreauth.WeeklyQuotaSnapshot {
 	if h == nil || len(authIDs) == 0 {
 		return nil
 	}
 
 	h.refreshCodexUsageFromCacheTTL(ctx)
-	statuses := h.codexUsageByAuthSnapshot()
+	statuses := h.bootstrapWeeklyQuotaStatuses(ctx, authIDs)
 	if len(statuses) == 0 {
 		return nil
 	}
@@ -74,6 +76,98 @@ func (h *Handler) WeeklyQuotaSnapshots(ctx context.Context, authIDs []string) ma
 		return nil
 	}
 	return out
+}
+
+func (h *Handler) bootstrapWeeklyQuotaStatuses(ctx context.Context, authIDs []string) map[string]codexAuthUsageStatus {
+	if h == nil {
+		return nil
+	}
+
+	h.ensureUsageRuntimeInitialized()
+	state := h.codexUsageStateRef()
+	if state == nil {
+		return h.codexUsageByAuthSnapshot()
+	}
+
+	state.codexUsagePollMu.Lock()
+	defer state.codexUsagePollMu.Unlock()
+
+	now := time.Now().UTC()
+	current := h.codexUsageByAuthSnapshot()
+	manager := h.authManager
+	if manager == nil {
+		return current
+	}
+
+	codexAuths := make(map[string]*coreauth.Auth)
+	for _, auth := range manager.List() {
+		if !shouldTrackCodexUsageAuth(auth) {
+			continue
+		}
+		codexAuths[strings.TrimSpace(auth.ID)] = auth
+	}
+	if len(codexAuths) == 0 {
+		return current
+	}
+
+	changed := hydrateCodexAuthUsageStatuses(current, codexAuths)
+	selectedAuthID := strings.TrimSpace(state.codexUsageSelected)
+	if selectedAuthID == "" {
+		selectedAuthID = strings.TrimSpace(h.selectedCodexAuthID())
+	}
+	if selectedAuthID != "" {
+		if _, ok := codexAuths[selectedAuthID]; !ok {
+			selectedAuthID = ""
+		}
+	}
+
+	poller := selectedAuthOnlyCodexUsagePollPolicy{handler: h}
+	polled := 0
+	seen := make(map[string]struct{}, len(authIDs))
+	for _, authID := range authIDs {
+		if polled >= codexWeeklyQuotaBootstrapPollLimit {
+			break
+		}
+		authID = strings.TrimSpace(authID)
+		if authID == "" {
+			continue
+		}
+		if _, ok := seen[authID]; ok {
+			continue
+		}
+		seen[authID] = struct{}{}
+
+		auth, ok := codexAuths[authID]
+		if !ok || auth == nil {
+			continue
+		}
+		status := applyCodexAuthUsageIdentity(current[authID], auth)
+		if !codexUsageNeedsBootstrapPoll(now, status) {
+			current[authID] = status
+			continue
+		}
+		updated, didPoll := poller.pollAuthUsage(ctx, now, status, auth)
+		current[authID] = updated
+		if didPoll {
+			changed = true
+			polled++
+		}
+	}
+
+	if changed {
+		h.updateCodexUsageState(current, selectedAuthID, now, true)
+	}
+	return current
+}
+
+func codexUsageNeedsBootstrapPoll(now time.Time, status codexAuthUsageStatus) bool {
+	if rate := codexEffectiveMainRateLimit(now, status); codexWeeklyQuotaWindow(rate) != nil {
+		return false
+	}
+	if codexIsAuthFailureStatus(status) {
+		return false
+	}
+	return codexUsageTTLExpired(status, now)
 }
 
 func codexWeeklyQuotaWindow(rate *codexUsageRateLimit) *codexUsageWindow {
