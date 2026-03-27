@@ -21,17 +21,81 @@ import (
 )
 
 const (
-	codexUsagePollInterval   = 60 * time.Second
-	codexUsageRequestTimeout = 20 * time.Second
-	codexUsageDefaultBaseURL = "https://chatgpt.com/backend-api"
-	codexFreePlanWeight      = 0.2
-	codexFiveHourWindowSecs  = 5 * 60 * 60
-	codexWeeklyWindowSecs    = 7 * 24 * 60 * 60
+	codexUsagePollInterval        = 60 * time.Second
+	codexUsageRequestTimeout      = 20 * time.Second
+	codexUsageDefaultBaseURL      = "https://chatgpt.com/backend-api"
+	codexUsageSoftErrorRetryLimit = 2
+	codexFreePlanWeight           = 0.2
+	codexFiveHourWindowSecs       = 5 * 60 * 60
+	codexWeeklyWindowSecs         = 7 * 24 * 60 * 60
 	// Pro accounts are weighted as 6x in aggregate usage capacity.
 	// Keep this as default unless overridden by config.
 	codexProPlanWeight      = 6.0
 	codexUsageStateFileName = ".codex-usage-cache.json"
 )
+
+const (
+	codexUsageErrorKindAuth      = "auth"
+	codexUsageErrorKindTransient = "transient"
+	codexUsageErrorKindOther     = "other"
+)
+
+var codexUsageAuthFailureMarkers = []string{
+	"status=401",
+	"status=403",
+	"http 401",
+	"http 403",
+	"unauthorized",
+	"forbidden",
+	"permission denied",
+	"access denied",
+	"authentication failed",
+	"auth failed",
+	"token_invalidated",
+	"invalid_token",
+	"invalid access token",
+	"expired token",
+	"missing access_token",
+	"missing api key",
+	"invalid_api_key",
+	"invalid api key",
+	"not authorized",
+	"认证失败",
+	"鉴权失败",
+	"权限不足",
+	"访问被拒绝",
+	"令牌失效",
+}
+
+var codexUsageTransientErrorMarkers = []string{
+	"eof",
+	"unexpected eof",
+	"timeout",
+	"timed out",
+	"deadline exceeded",
+	"context canceled",
+	"temporarily unavailable",
+	"temporary failure",
+	"temporary error",
+	"connection reset",
+	"connection refused",
+	"connection aborted",
+	"broken pipe",
+	"transport is closing",
+	"server closed idle connection",
+	"tls handshake timeout",
+	"no such host",
+	"network is unreachable",
+	"http2: client connection lost",
+	"stream error",
+	"status=408",
+	"status=425",
+	"status=429",
+	"status=500",
+	"status=502",
+	"status=503",
+	"status=504",
+}
 
 type codexUsageWindow struct {
 	UsedPercent        int   `json:"used_percent"`
@@ -70,6 +134,9 @@ type codexUsageAuthFileExtensionItem struct {
 	Status       string            `json:"status,omitempty"`
 	Error        string            `json:"error,omitempty"`
 	ErrorSummary string            `json:"error_summary,omitempty"`
+	ErrorKind    string            `json:"error_kind,omitempty"`
+	Transient    bool              `json:"transient_error,omitempty"`
+	Stale        bool              `json:"stale,omitempty"`
 	LastUsedAt   time.Time         `json:"last_used_at,omitempty"`
 	FiveHour     *codexUsageWindow `json:"five_hour,omitempty"`
 	Week         *codexUsageWindow `json:"week,omitempty"`
@@ -179,6 +246,9 @@ type codexAuthUsageStatus struct {
 	PathStyle     string             `json:"path_style,omitempty"`
 	Status        string             `json:"status"`
 	Error         string             `json:"error,omitempty"`
+	ErrorKind     string             `json:"error_kind,omitempty"`
+	Transient     bool               `json:"transient_error,omitempty"`
+	Stale         bool               `json:"stale,omitempty"`
 	LastPolledAt  time.Time          `json:"last_polled_at,omitempty"`
 	LastSuccessAt *time.Time         `json:"last_success_at,omitempty"`
 	HasUsage      bool               `json:"has_usage"`
@@ -673,6 +743,9 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 			Status:       strings.TrimSpace(status.Status),
 			Error:        strings.TrimSpace(status.Error),
 			ErrorSummary: codexUsageErrorSummary(status.Error),
+			ErrorKind:    codexUsageStatusErrorKind(status),
+			Transient:    codexUsageStatusTransient(status),
+			Stale:        codexUsageStatusStale(status),
 			LastUsedAt:   codexAuthUsageRecentTime(status),
 		}
 		if item.PlanType == "" && status.Usage != nil {
@@ -838,6 +911,9 @@ func codexStatusPriorityValue(value any) (int, bool) {
 }
 
 func codexAuthUsageRecentTime(status codexAuthUsageStatus) time.Time {
+	if strings.EqualFold(strings.TrimSpace(status.Status), "error") && !status.LastPolledAt.IsZero() {
+		return status.LastPolledAt.UTC()
+	}
 	if status.LastSuccessAt != nil && !status.LastSuccessAt.IsZero() {
 		return status.LastSuccessAt.UTC()
 	}
@@ -1001,38 +1077,74 @@ func codexIsAuthFailureStatus(status codexAuthUsageStatus) bool {
 	if !strings.EqualFold(strings.TrimSpace(status.Status), "error") {
 		return false
 	}
-	signals := strings.ToLower(strings.TrimSpace(status.Error))
-	if signals == "" {
+	return codexUsageStatusErrorKind(status) == codexUsageErrorKindAuth
+}
+
+func codexUsageStatusErrorKind(status codexAuthUsageStatus) string {
+	kind := strings.ToLower(strings.TrimSpace(status.ErrorKind))
+	if kind != "" {
+		return kind
+	}
+	if !strings.EqualFold(strings.TrimSpace(status.Status), "error") {
+		return ""
+	}
+	return codexUsageErrorKindFromText(status.Error)
+}
+
+func codexUsageStatusTransient(status codexAuthUsageStatus) bool {
+	if status.Transient {
+		return true
+	}
+	return codexUsageStatusErrorKind(status) == codexUsageErrorKindTransient
+}
+
+func codexUsageStatusStale(status codexAuthUsageStatus) bool {
+	if status.Stale {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(status.Status), "error") {
 		return false
 	}
-	markers := []string{
-		"status=401",
-		"status=403",
-		"http 401",
-		"http 403",
-		"unauthorized",
-		"forbidden",
-		"permission denied",
-		"access denied",
-		"authentication failed",
-		"auth failed",
-		"token_invalidated",
-		"invalid_token",
-		"invalid access token",
-		"expired token",
-		"missing access_token",
-		"missing api key",
-		"invalid_api_key",
-		"invalid api key",
-		"not authorized",
-		"认证失败",
-		"鉴权失败",
-		"权限不足",
-		"访问被拒绝",
-		"令牌失效",
+	return status.HasUsage && status.Usage != nil
+}
+
+func codexUsageErrorKindFromPollError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if httpErr, okHTTP := err.(*codexUsageHTTPError); okHTTP {
+		switch {
+		case httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden:
+			return codexUsageErrorKindAuth
+		case httpErr.StatusCode == http.StatusRequestTimeout || httpErr.StatusCode == http.StatusTooEarly || httpErr.StatusCode == http.StatusTooManyRequests:
+			return codexUsageErrorKindTransient
+		case httpErr.StatusCode >= http.StatusInternalServerError:
+			return codexUsageErrorKindTransient
+		}
+	}
+	return codexUsageErrorKindFromText(err.Error())
+}
+
+func codexUsageErrorKindFromText(text string) string {
+	signals := strings.ToLower(strings.TrimSpace(text))
+	if signals == "" {
+		return ""
+	}
+	if codexUsageContainsAnyMarker(signals, codexUsageAuthFailureMarkers) {
+		return codexUsageErrorKindAuth
+	}
+	if codexUsageContainsAnyMarker(signals, codexUsageTransientErrorMarkers) {
+		return codexUsageErrorKindTransient
+	}
+	return codexUsageErrorKindOther
+}
+
+func codexUsageContainsAnyMarker(text string, markers []string) bool {
+	if text == "" {
+		return false
 	}
 	for _, marker := range markers {
-		if strings.Contains(signals, marker) {
+		if strings.Contains(text, marker) {
 			return true
 		}
 	}
@@ -2178,6 +2290,9 @@ func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtension
 				Status:       strings.TrimSpace(item.Status),
 				Error:        strings.TrimSpace(item.Error),
 				ErrorSummary: strings.TrimSpace(item.ErrorSummary),
+				ErrorKind:    strings.TrimSpace(item.ErrorKind),
+				Transient:    item.Transient,
+				Stale:        item.Stale,
 				LastUsedAt:   item.LastUsedAt,
 				FiveHour:     cloneCodexUsageWindow(item.FiveHour),
 				Week:         cloneCodexUsageWindow(item.Week),
