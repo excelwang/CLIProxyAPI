@@ -206,7 +206,7 @@ type RoutingSmartWeeklyConfig struct {
 	WarmupDelay string `yaml:"warmup-delay,omitempty" json:"warmup-delay,omitempty"`
 
 	// MaxAuthCnt limits how many top-ranked weekly-quota auths can participate in the current round-robin pool.
-	// When omitted, smart-weekly defaults to 5; 0 includes all eligible auths at the active priority,
+	// When omitted, smart-weekly defaults to 10; 0 includes all eligible auths at the active priority,
 	// and values < 0 preserve the legacy best-ranked behavior.
 	MaxAuthCnt *int `yaml:"max-auth-cnt,omitempty" json:"max-auth-cnt,omitempty"`
 }

@@ -13,7 +13,7 @@ import (
 const (
 	defaultSmartWeeklyProtectionThresholdPercent = 5.0
 	defaultSmartWeeklyWarmupDelay                = 5 * time.Minute
-	defaultSmartWeeklyMaxAuthCount               = 5
+	defaultSmartWeeklyMaxAuthCount               = 10
 )
 
 // SmartWeeklySelector enables scheduler-backed weekly-aware routing.
