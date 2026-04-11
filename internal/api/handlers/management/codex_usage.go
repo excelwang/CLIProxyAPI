@@ -62,17 +62,18 @@ type codexUsageAdditionalRateLimit struct {
 }
 
 type codexUsageAuthFileExtensionItem struct {
-	AuthID       string            `json:"auth_id,omitempty"`
-	FileName     string            `json:"file_name,omitempty"`
-	Account      string            `json:"account,omitempty"`
-	PlanType     string            `json:"plan_type,omitempty"`
-	Priority     int               `json:"priority,omitempty"`
-	Status       string            `json:"status,omitempty"`
-	Error        string            `json:"error,omitempty"`
-	ErrorSummary string            `json:"error_summary,omitempty"`
-	LastUsedAt   time.Time         `json:"last_used_at,omitempty"`
-	FiveHour     *codexUsageWindow `json:"five_hour,omitempty"`
-	Week         *codexUsageWindow `json:"week,omitempty"`
+	AuthID          string            `json:"auth_id,omitempty"`
+	FileName        string            `json:"file_name,omitempty"`
+	Account         string            `json:"account,omitempty"`
+	PlanType        string            `json:"plan_type,omitempty"`
+	UsageMultiplier float64           `json:"usage_multiplier,omitempty"`
+	Priority        int               `json:"priority,omitempty"`
+	Status          string            `json:"status,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	ErrorSummary    string            `json:"error_summary,omitempty"`
+	LastUsedAt      time.Time         `json:"last_used_at,omitempty"`
+	FiveHour        *codexUsageWindow `json:"five_hour,omitempty"`
+	Week            *codexUsageWindow `json:"week,omitempty"`
 }
 
 type codexUsageRecoveryEvent struct {
@@ -678,6 +679,14 @@ func buildCodexUsageExtensions(current map[string]codexAuthUsageStatus, now time
 		if item.PlanType == "" && status.Usage != nil {
 			item.PlanType = strings.TrimSpace(status.Usage.PlanType)
 		}
+		currentMultiplier := 0.0
+		if status.Usage != nil {
+			currentMultiplier = status.Usage.TotalUsageMultiplier
+		}
+		item.UsageMultiplier = roundFloat(
+			ensureCodexTotalUsageMultiplierValue(currentMultiplier, item.PlanType, freePlanWeight, proPlanWeight),
+			4,
+		)
 		if normalized != nil {
 			item.FiveHour = cloneCodexUsageWindow(normalized.PrimaryWindow)
 			item.Week = cloneCodexUsageWindow(normalized.SecondaryWindow)
@@ -1869,12 +1878,7 @@ func ensureCodexTotalUsageMultiplier(payload *codexUsagePayload, freePlanWeight,
 	if payload == nil {
 		return
 	}
-	if payload.TotalUsageMultiplier > 0 {
-		return
-	}
-	if inferred := inferCodexTotalUsageMultiplier(payload.PlanType, freePlanWeight, proPlanWeight); inferred > 0 {
-		payload.TotalUsageMultiplier = inferred
-	}
+	payload.TotalUsageMultiplier = ensureCodexTotalUsageMultiplierValue(payload.TotalUsageMultiplier, payload.PlanType, freePlanWeight, proPlanWeight)
 }
 
 func (h *Handler) codexFreePlanWeight() float64 {
@@ -2328,6 +2332,23 @@ func cloneCodexUsagePayload(payload *codexUsagePayload) codexUsagePayload {
 	return cloned
 }
 
+func ensureCodexTotalUsageMultiplierValue(current float64, planType string, freePlanWeight, proPlanWeight float64) float64 {
+	switch strings.ToLower(strings.TrimSpace(planType)) {
+	case "free":
+		if freePlanWeight > 0 {
+			return freePlanWeight
+		}
+	case "pro":
+		if proPlanWeight > 0 {
+			return proPlanWeight
+		}
+	}
+	if current > 0 {
+		return current
+	}
+	return inferCodexTotalUsageMultiplier(planType, freePlanWeight, proPlanWeight)
+}
+
 func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtensions {
 	if input == nil {
 		return nil
@@ -2349,17 +2370,18 @@ func cloneCodexUsageExtensions(input *codexUsageExtensions) *codexUsageExtension
 		for i := range input.ActiveAuthFiles {
 			item := input.ActiveAuthFiles[i]
 			out.ActiveAuthFiles = append(out.ActiveAuthFiles, codexUsageAuthFileExtensionItem{
-				AuthID:       strings.TrimSpace(item.AuthID),
-				FileName:     strings.TrimSpace(item.FileName),
-				Account:      strings.TrimSpace(item.Account),
-				PlanType:     strings.TrimSpace(item.PlanType),
-				Priority:     item.Priority,
-				Status:       strings.TrimSpace(item.Status),
-				Error:        strings.TrimSpace(item.Error),
-				ErrorSummary: strings.TrimSpace(item.ErrorSummary),
-				LastUsedAt:   item.LastUsedAt,
-				FiveHour:     cloneCodexUsageWindow(item.FiveHour),
-				Week:         cloneCodexUsageWindow(item.Week),
+				AuthID:          strings.TrimSpace(item.AuthID),
+				FileName:        strings.TrimSpace(item.FileName),
+				Account:         strings.TrimSpace(item.Account),
+				PlanType:        strings.TrimSpace(item.PlanType),
+				UsageMultiplier: item.UsageMultiplier,
+				Priority:        item.Priority,
+				Status:          strings.TrimSpace(item.Status),
+				Error:           strings.TrimSpace(item.Error),
+				ErrorSummary:    strings.TrimSpace(item.ErrorSummary),
+				LastUsedAt:      item.LastUsedAt,
+				FiveHour:        cloneCodexUsageWindow(item.FiveHour),
+				Week:            cloneCodexUsageWindow(item.Week),
 			})
 		}
 	}

@@ -88,12 +88,13 @@ func TestBuildCodexUsageExtensions_PopulatesPriorityFromAuthFile(t *testing.T) {
 func TestCloneCodexUsageExtensions_CopiesPriority(t *testing.T) {
 	input := &codexUsageExtensions{
 		ActiveAuthFiles: []codexUsageAuthFileExtensionItem{{
-			AuthID:   "auth-1",
-			FileName: "auth-1.json",
-			Account:  "priority@example.com",
-			PlanType: "team",
-			Priority: 9,
-			Status:   "ok",
+			AuthID:          "auth-1",
+			FileName:        "auth-1.json",
+			Account:         "priority@example.com",
+			PlanType:        "team",
+			UsageMultiplier: 1.25,
+			Priority:        9,
+			Status:          "ok",
 		}},
 	}
 	cloned := cloneCodexUsageExtensions(input)
@@ -102,6 +103,9 @@ func TestCloneCodexUsageExtensions_CopiesPriority(t *testing.T) {
 	}
 	if got := cloned.ActiveAuthFiles[0].Priority; got != 9 {
 		t.Fatalf("expected cloned priority 9, got %d", got)
+	}
+	if got := cloned.ActiveAuthFiles[0].UsageMultiplier; got != 1.25 {
+		t.Fatalf("expected cloned usage multiplier 1.25, got %v", got)
 	}
 }
 
@@ -126,6 +130,27 @@ func TestBuildCodexUsageExtensions_PopulatesPriorityFromAuthLookup(t *testing.T)
 	}
 	if got := exts.ActiveAuthFiles[0].Priority; got != 7 {
 		t.Fatalf("expected extension priority 7 from auth lookup, got %d", got)
+	}
+}
+
+func TestBuildCodexUsageExtensions_PopulatesUsageMultiplierForFreePlan(t *testing.T) {
+	exts := buildCodexUsageExtensions(map[string]codexAuthUsageStatus{
+		"codex-free.json": {
+			AuthID:   "codex-free.json",
+			FileName: "codex-free.json",
+			PlanType: "free",
+			Status:   "ok",
+			Usage: &codexUsagePayload{
+				PlanType:             "free",
+				TotalUsageMultiplier: 0.2,
+			},
+		},
+	}, time.Now().UTC(), 1.0/15.0, 6.0, "", nil, "", "", "", time.Time{})
+	if exts == nil || len(exts.ActiveAuthFiles) != 1 {
+		t.Fatal("expected one active auth file extension item")
+	}
+	if got := exts.ActiveAuthFiles[0].UsageMultiplier; got != 0.0667 {
+		t.Fatalf("expected extension usage multiplier 0.0667, got %v", got)
 	}
 }
 
@@ -1090,7 +1115,6 @@ func TestObservedServiceTierCallback_RecordsServiceTierWithoutAuthID(t *testing.
 		t.Fatal("expected non-zero observed timestamp")
 	}
 }
-
 
 func TestObservedServiceTierCallback_DoesNotClearObservedAuthIDOnEmptyFollowup(t *testing.T) {
 	h := seedTestCodexUsageState(&Handler{}, &codexUsageState{
