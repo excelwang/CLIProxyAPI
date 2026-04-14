@@ -506,6 +506,9 @@ func shouldTrackCodexUsageAuth(auth *coreauth.Auth) bool {
 	if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
 		return false
 	}
+	if !isCodexUsageFileBackedAuth(auth) {
+		return false
+	}
 	if auth.Disabled || auth.Status == coreauth.StatusDisabled {
 		return false
 	}
@@ -517,6 +520,19 @@ func shouldTrackCodexUsageAuth(auth *coreauth.Auth) bool {
 		}
 	}
 	return true
+}
+
+func isCodexUsageFileBackedAuth(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	if fileName := strings.TrimSpace(auth.FileName); strings.HasSuffix(strings.ToLower(fileName), ".json") {
+		return true
+	}
+	if path := strings.TrimSpace(authAttribute(auth, "path")); path != "" {
+		return true
+	}
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(auth.ID)), ".json")
 }
 
 func (h *Handler) updateCodexUsageState(current map[string]codexAuthUsageStatus, selectedAuthID string, now time.Time, persist bool) {
